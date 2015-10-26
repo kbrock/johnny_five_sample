@@ -1,0 +1,21 @@
+base: &base
+  adapter: postgresql
+  encoding: utf8
+  username: root
+  pool: 1
+  wait_timeout: 5
+  min_messages: warning
+
+development:
+  <<: *base
+  database: johnny_five_sample_development
+  min_messages: notice
+
+production:
+  <<: *base
+  database: johnny_five_sample_production
+
+test: &test
+  <<: *base
+  pool: 3
+  database: johnny_five_sample_test
