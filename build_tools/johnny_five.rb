@@ -4,6 +4,9 @@
 
 class TravisParser
   attr_accessor :verbose
+
+  # http://docs.travis-ci.com/user/environment-variables/#Default-Environment-Variables
+
   # ENV['TRAVIS_PULL_REQUEST']
   # PRs:     The pull request number
   # non PRs: "false"
@@ -20,7 +23,7 @@ class TravisParser
   attr_accessor :commit_range
   # text before "..." in 
   attr_accessor :first_commit # calculated from comit_range
-  attr_accessor :last_commit # calculated from git
+  attr_accessor :last_commit  # calculated from git (maybe use commit_range?)
 
   alias pr? pr
 
@@ -40,8 +43,11 @@ class TravisParser
   end
 
   def last_commit
-    # @last_commit ||= commit_range.split("...").last || ""
-    @last_commit ||= git("rev-list -n 1 FETCH_HEAD^2").chomp
+    @last_commit ||= commit_range.split("...").last || ""
+  end
+
+  def last_commit_alt
+    @last_commit_alt ||= git("rev-list -n 1 FETCH_HEAD^2").chomp
   end
 
   def file_ref
@@ -61,10 +67,12 @@ class TravisParser
         # On the oddball chance that it's a merge commit, we pray
         # it's a merge from upstream and also pass --first-parent
         debug("Only one commit in range, examining #{last_commit}")
+        # ??? what would happen if we use commit_range here?
         "-m --first-parent -1 #{last_commit}"
       else
         # In case they merged in upstream, we only care about the first
         # parent. For crazier merges, we hope
+        # ??? what would happen if we used commit_range here?
         "--first-parent #{first_commit}...#{last_commit}"
       end
     else
@@ -114,8 +122,9 @@ class TravisParser
       puts "COMMIT_RANGE: #{commit_range}"
       puts "first_commit: #{first_commit}"
       puts "last_commit : #{last_commit}"
+      puts "last_commit2: #{last_commit_alt}"
     else
-      puts "merge into master (#{branch})"
+      puts "build BRANCH: #{branch}"
       puts "COMMIT_RANGE: #{commit_range}"
     end
     puts "COMMIT      : #{commit}"
@@ -188,11 +197,39 @@ class JohnnyFive
 
   def run
     inform
-    #skip("Im being trigger happy") if pr?
+    reason = skip_reason
+    skip(reason) if reason
   end
 
   def self.run(argv, env)
     instance.parse(argv, env).run
+  end
+
+  def skip_reason
+    #cfg.build :pr => false, :branch => "master" # always build master
+    if !file_list.pr? && file_list.branch == "master"
+      debug("building non-PR, branch: master")
+      nil
+    #cfg.build :pr => true, :match => :component, :suffix => "-spec"
+    elsif file_list.pr? && triggered?("#{component}#{"-spec"}")
+      debug("building PR, component: #{"#{component}#{"-spec"}"} ")
+      nil
+    else
+      debug("default case")
+      "dont build branch by default: #{file_list.pr? ? "PR" : "non-PR" }"
+    end
+    # always build a pr that matches the component-spec
+
+  end
+
+  def triggered?(target_name)
+    # in the filelist - determine which targets were triggered
+    #return true if we can find target in there (or :all came back)
+    true
+  end
+
+  def debug(msg)
+    $stderr.puts "DEBUG: #{msg}" # if verbose?
   end
 
   ## configuration DSL
@@ -210,6 +247,12 @@ class JohnnyFive
   def trigger(src_target, dependent_target)
   end
 
+  def skip(options)
+  end
+
+  def build(options)
+  end
+
   def self.config
     yield instance
   end
@@ -219,22 +262,36 @@ if __FILE__ == $PROGRAM_NAME
   JohnnyFive.config do |cfg|
     cfg.file "Gemfile",                        %w(controllers models), :exact => true
     cfg.file "app/{assets,controllers,views}", "controllers"
-    cfg.file "app/models",                     "models"
-    cfg.file "app/helpers",                    "controllers"
-    cfg.file "{bin,build_tools}",              :none
+    cfg.file "app/models",                     "models", :ext => ".rb"
+    cfg.file "app/helpers",                    "controllers", :ext => ".rb"
+    cfg.file "bin",                            :none
+    cfg.file "build_tools",                    :all # temporary, switch to :none when done
     cfg.file "gems/one",                       "one", :except => %{gems/one/test}
-    cfg.file "public",                         "controllers"
-    cfg.file "vendor",                         "controllers"
+    cfg.file "public",                         "ui"
+    cfg.file "vendor",                         "ui"
 
     cfg.test "test/{controllers,views}",       "controllers-spec", :ext => "_spec.rb"
-    cfg.test "test/fixtures",                  %w(models)
-    cfg.test "test/helpers",                   "controllers-spec"
-    cfg.test "test/integration",               "controllers-spec"
-    cfg.test "test/models",                    "models-spec"
-    cfg.test "test/test_helper.rb",            :all
+    cfg.test "test/fixtures",                  "models"
+    cfg.test "test/helpers",                   "controllers-spec", :ext => "_spec.rb"
+    cfg.test "test/integration",               "ui-spec", :ext => "_spec.rb"
+    cfg.test "test/models",                    "models-spec", :ext => "_spec.rb"
+    cfg.test "test/test_helper.rb",            :all, :exact => true
 
+    cfg.trigger "controllers",                 "ui"
     cfg.trigger "models",                      "controllers"
     cfg.trigger "one",                         %(controllers models)
+
+    cfg.trigger "controllers",                 "controllers-spec"
+    cfg.trigger "models",                      "models-spec"
+    cfg.trigger "one",                         "one-spec"
+    cfg.trigger "ui",                          "ui-spec"
+
+    cfg.build :pr => false, :branch => "master" # always build master
+    # always build a pr that matches the component-spec
+    cfg.build :pr => true, :match => :component, :suffix => "-spec"
+    # cfg.build :default
+    # cfg.error :default
+    cfg.skip :default
   end
 
   JohnnyFive.run(ARGV, ENV)
