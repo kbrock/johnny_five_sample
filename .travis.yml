@@ -1,0 +1,25 @@
+language: ruby
+rvm:
+- '2.2'
+sudo: false
+cache: bundler
+env:
+  global:
+  - RUBY_GC_HEAP_GROWTH_MAX_SLOTS=300000
+  - RUBY_GC_HEAP_INIT_SLOTS=600000
+  - RUBY_GC_HEAP_GROWTH_FACTOR=1.25
+  matrix:
+  - TEST_SUITE=controllers
+  - TEST_SUITE=models
+  - TEST_SUITE=ui
+  - GEM=one
+matrix:
+  fast_finish: true
+#addons:
+#  postgresql: '9.4'
+before_install:
+- source ${TRAVIS_BUILD_DIR}/build_tools/before_install.sh
+before_script:
+- source ${TRAVIS_BUILD_DIR}/build_tools/before_script.sh
+script:
+- bundle exec rake ${TEST_SUITE+test:$TEST_SUITE}
