@@ -65,6 +65,7 @@ class TravisParser
         ]
       elsif single_commit?
         [
+          "-m --first-parent -1 #{last_commit_alt}",
           "-m --first-parent -1 #{last_commit}",
           "-m --first-parent #{commit_range}",
           "#{last_commit}^...#{last_commit}",
@@ -111,43 +112,45 @@ class TravisParser
   def inform(component = "build")
     if pr?
       puts "PR           : #{branch}"
-      puts "COMMIT_RANGE : #{commit_range}" if single_commit? || !commit_range?
+      puts "COMMIT_RANGE : #{commit_range}" #if single_commit? || !commit_range?
       puts "first_commit : #{first_commit}"
-      puts "last_commit  : #{last_commit} #{last_commit_alt if last_commit_alt != last_commit}"
+      puts "last_commit  : #{last_commit_alt} : git: #{last_commit if last_commit_alt != last_commit}"
     else
       puts "BRANCH       : #{branch}"
       puts "first_commit : #{first_commit}"
       puts "last_commit  : #{last_commit_alt} (branch has no alt)"
     end
-    puts "FETCH_HEAD     : #{git("rev-parse FETCH_HEAD   2>/dev/null")} (debug)"
-    puts "FETCH_HEAD     : #{git("rev-parse FETCH_HEAD^1 2>/dev/null")} (debug)"
-    puts "FETCH_HEAD^2   : #{git("rev-parse FETCH_HEAD^2 2>/dev/null")} (debug)"
-    puts "COMMIT         : #{commit || "EMPTY"}" if !commit || commit != last_commit_alt
-    puts "component      : #{component}"
-    puts "file ref       : #{file_refs.first}"
+    puts "FETCH_HEAD   : #{git("rev-parse FETCH_HEAD   2>/dev/null")} (debug)"
+    puts "FETCH_HEAD   : #{git("rev-parse FETCH_HEAD^1 2>/dev/null")} (debug)"
+    puts "FETCH_HEAD^2 : #{git("rev-parse FETCH_HEAD^2 2>/dev/null")} (debug)"
+    puts "COMMIT       : #{commit || "EMPTY"}" if !commit || commit != last_commit_alt
+    puts "component    : #{component}"
+    puts "file ref     : #{file_refs.first}"
   end
 
   def compare_commits
     puts
     puts "COMMITS:"
-    puts "======="
     file_refs.each do |fr|
-      puts "#{fr}"
-      puts commits(fr)
       puts "======="
+      puts "#{fr}"
+      #puts "======="
+      puts commits(fr).map { |c| "  - #{c}" }.join("\n")
     end
+    puts "======="
     puts
   end
 
   def compare_files
     puts "FILES:"
-    puts "======="
     puts changed_files.join("\n")
     file_refs.each do |fr|
-      puts "#{fr}"
-      puts changed_files(fr).join("\n")
       puts "======="
+      puts "  #{fr}"
+      puts "======="
+      puts changed_files(fr).join("\n")
     end
+    puts "======="
     puts
   end
 
@@ -155,7 +158,7 @@ class TravisParser
 
   def git(args, default_value = nil)
     # puts "git #{args}" if verbose
-    ret = `git #{args}`.chomp
+    ret = `git #{args} 2> /dev/null`.chomp
     $?.to_i == 0 ? ret : default_value
   end
 end
@@ -183,8 +186,9 @@ class JohnnyFive
     skip!(reason) unless run_it
   end
 
-  def self.run(argv, env)
-    instance.parse(argv, env).run
+  # logic
+  def skip!(reason)
+    puts "skipping: #{reason}"
   end
 
   def determine_course_of_action
@@ -214,6 +218,15 @@ class JohnnyFive
 
   def self.instance
     @instance ||= new
+  end
+
+  # dsl
+
+
+  # main entry
+
+  def self.run(argv, env)
+    instance.parse(argv, env).run
   end
 end
 
