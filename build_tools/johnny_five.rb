@@ -1,241 +1,240 @@
 #!/usr/bin/env ruby
 
 # see also https://github.com/travis-ci/travis-ci/issues/5007
-
+# env vars: http://docs.travis-ci.com/user/environment-variables/#Default-Environment-Variables
+# base code: https://github.com/TechEmpower/FrameworkBenchmarks/blob/master/toolset/run-ci.py#L53
 class TravisParser
-  attr_accessor :verbose
-  # ENV['TRAVIS_PULL_REQUEST']
-  # PRs:     The pull request number
-  # non PRs: "false"
+  # @return <String> pull request number ("false" if this is a branch)
   attr_accessor :pr
-  # ENV["TRAVIS_BRANCH"]
-  # PRs:     name of the branch targeted by PR (typically "master")
-  # non PRs: name of the branch currently being built
+  # branch being built (for a pr, target branch / typically master)
   attr_accessor :branch
-  # ENV['TRAVIS_COMMIT']
-  # The commit that the current build is testing
   attr_accessor :commit
-  # ENV['TRAVIS_COMMIT_RANGE']
-  # The range of commits that were included in the push or pull request
   attr_accessor :commit_range
-  # text before "..." in 
-  attr_accessor :first_commit # calculated from comit_range
-  attr_accessor :last_commit # calculated from git
 
-  alias pr? pr
-
-  def initialize(verbose = true)
-    @verbose = true
+  def initialize(options = {})
+    options.each do |n, v|
+      public_send("#{n}=", v)
+    end
   end
 
   def parse(_argv = ARGV, env = ENV)
-    @pr     = env['TRAVIS_PULL_REQUEST'] != "false"
+    @pr     = env['TRAVIS_PULL_REQUEST']
     @branch = env['TRAVIS_BRANCH']
     @commit = env['TRAVIS_COMMIT']
     @commit_range = env['TRAVIS_COMMIT_RANGE'] || ""
   end
 
   def first_commit
-    @first_commit ||= commit_range.split("...").first || ""
+    commit_range.split("...").first || ""
+  end
+
+  def last_commit_alt
+    commit_range.split("...").last || ""
   end
 
   def last_commit
-    # @last_commit ||= commit_range.split("...").last || ""
-    @last_commit ||= git("rev-list -n 1 FETCH_HEAD^2").chomp
+    @last_commit ||= git("rev-list -n 1 FETCH_HEAD^2")
   end
 
-  def file_ref
+  def pr?
+    @pr != "false"
+  end
+
+  def commit_range?
+    first_commit != ""
+  end
+
+  # There is only one commit in the pull request so far,
+  # or Travis-CI is not yet passing the commit range properly
+  # for pull requests. We examine just the one commit using -1
+  #
+  # On the oddball chance that it's a merge commit, we pray
+  # it's a merge from upstream and also pass --first-parent
+  def single_commit?
+    commit_range? && (first_commit == last_commit)
+  end
+
+  def file_refs
     if pr?
-      if first_commit == ""
-        # Travis-CI is not yet passing a commit range for pull requests
-        # so we must use the auto merge's changed file list. This has the
-        # negative effect that new pushes to the PR will immediately
-        # start affecting any new jobs, regardless of the build they are on
-        debug("No first commit, using Github's auto merge commit")
-        "--first-parent -1 -m FETCH_HEAD"
-      elsif first_commit == last_commit
-        # There is only one commit in the pull request so far,
-        # or Travis-CI is not yet passing the commit range properly
-        # for pull requests. We examine just the one commit using -1
-        #
-        # On the oddball chance that it's a merge commit, we pray
-        # it's a merge from upstream and also pass --first-parent
-        debug("Only one commit in range, examining #{last_commit}")
-        "-m --first-parent -1 #{last_commit}"
+      if !commit_range?
+        # use the filelist from auto merge
+        # unfortunatly, pushes to a PR will immediately affect a running job.
+        [
+          "-m --first-parent -1 FETCH_HEAD",
+          "-m --first-parent FETCH_HEAD~1...FETCH_HEAD",
+        ]
+      elsif single_commit?
+        [
+          "#{commit_range}",
+          "#{last_commit}^...#{last_commit}",
+          "-m --first-parent -1 #{last_commit_alt}",
+          "-m --first-parent -1 #{last_commit}",
+          "-m --first-parent #{commit_range}",
+          "#{last_commit_alt}^...#{last_commit_alt}",
+        ]
       else
-        # In case they merged in upstream, we only care about the first
-        # parent. For crazier merges, we hope
-        "--first-parent #{first_commit}...#{last_commit}"
+        [
+          "#{commit_range}",
+          "--first-parent #{first_commit}...#{last_commit}",
+          "--first-parent #{first_commit}...#{last_commit_alt}",
+          "--first-parent #{commit_range}",
+        ]
       end
     else
-      debug('I am not testing a pull request')
         # Three main scenarios to consider
         #  - 1 One non-merge commit pushed to master
         #  - 2 One merge commit pushed to master (e.g. a PR was merged).
         #      This is an example of merging a topic branch
         #  - 3 Multiple commits pushed to master
         #
-        #  1 and 2 are actually handled the same way, by showing the
-        #  changes being brought into to master when that one commit
-        #  was merged. Fairly simple, `git log -1 COMMIT`. To handle
-        #  the potential merge of a topic branch you also include
-        #  `--first-parent -m`.
+        #  1 and 2: show changes brought into master for the one commit.
+        #  ==> `git log -1 COMMIT`.
+        #  ==> `--first-parent -m` handles merges of sub-topic branchs
         #
-        #  3 needs to be handled by comparing all merge children for
-        #  the entire commit range. The best solution here would *not*
-        #  use --first-parent because there is no guarantee that it
-        #  reflects changes brought into master. Unfortunately we have
-        #  no good method inside Travis-CI to easily differentiate
-        #  scenario 1/2 from scenario 3, so I cannot handle them all
-        #  separately. 1/2 are the most common cases, 3 with a range
-        #  of non-merge commits is the next most common, and 3 with
-        #  a range including merge commits is the least common, so I
-        #  am choosing to make our Travis-CI setup potential not work
-        #  properly on the least common case by always using
-        #  --first-parent
-
-        # Handle 3
-        # Note: Also handles 2 because Travis-CI sets COMMIT_RANGE for
-        # merged PR commits
-      "--first-parent -m #{commit_range}"
+        #  3: compare all merged into master
+        #  ==> to include sub merges, best to not use `--first-parent`
+        #  since sub merges is not common and difficult to distinguish
+        #  so punting. (we're building all of master anyway - so no biggie)
+      [
+        "#{commit_range}",
+        "--first-parent -m #{commit_range}",
+      ]
     end
-
-    # Handle 1
-    # "--first-parent -m -1 #{commit}"
   end
 
-  def changed_files
-    @changed_files ||= git("log --name-only --pretty=\"format:\" #{file_ref}").split("\n").uniq
+  def changed_files(ref = file_refs.first)
+    #git("diff --name-only #{ref}").split("\n").uniq.sort
+    git("log --name-only --pretty=\"format:\" #{ref}", "").split("\n").uniq.sort
+  end
+
+  def commits(ref = file_refs.first)
+    git("log --oneline --decorate #{ref}", "").split("\n")
   end
 
   def inform(component = "build")
     if pr?
-      puts "PR    BRANCH: #{branch}"
-      puts "COMMIT_RANGE: #{commit_range}"
-      puts "first_commit: #{first_commit}"
-      puts "last_commit : #{last_commit}"
+      puts "PR           : #{branch}"
+      puts "COMMIT_RANGE : #{commit_range}" #if single_commit? || !commit_range?
+      puts "first_commit : #{first_commit}"
+      puts "last_commit  : #{last_commit_alt} : git: #{last_commit if last_commit_alt != last_commit}"
     else
-      puts "merge into master (#{branch})"
-      puts "COMMIT_RANGE: #{commit_range}"
+      puts "BRANCH       : #{branch}"
+      puts "first_commit : #{first_commit}"
+      puts "last_commit  : #{last_commit_alt} (branch has no alt)"
     end
-    puts "COMMIT      : #{commit}"
-    puts "component   : #{component}"
-    puts "file ref    : #{file_ref}"
-    if verbose
-      puts "CHANGED FILES:"
-      puts "---"
-      puts changed_files.uniq.sort.join("\n")
-      puts "---"
-    end
+    puts "FETCH_HEAD   : #{git("rev-parse FETCH_HEAD   2>/dev/null")} (debug)"
+    puts "FETCH_HEAD   : #{git("rev-parse FETCH_HEAD^1 2>/dev/null")} (debug)"
+    puts "FETCH_HEAD^2 : #{git("rev-parse FETCH_HEAD^2 2>/dev/null")} (debug)"
+    puts "COMMIT       : #{commit || "EMPTY"}" if !commit || commit != last_commit_alt
+    puts "component    : #{component}"
+    puts "file ref     : #{file_refs.first}"
   end
 
-  def debug(msg)
-    $stderr.puts "DEBUG: #{msg}" # if verbose?
+  def compare_commits
+    puts
+    puts "COMMITS:"
+    file_refs.each do |fr|
+      puts "======="
+      puts "#{fr}"
+      #puts "======="
+      puts commits(fr).map { |c| "  - #{c}" }.join("\n")
+    end
+    puts "======="
+    puts
+  end
+
+  def compare_files
+    puts "FILES:"
+    file_refs.each do |fr|
+      puts "======="
+      puts "#{fr}"
+      #puts "======="
+      puts changed_files(fr).map { |c| "  - #{c}" }.join("\n")
+    end
+    puts "======="
+    puts
   end
 
   private
 
-  def git(args)
-    puts "git #{args}" if verbose
-    `git #{args}`
+  def git(args, default_value = nil)
+    # puts "git #{args}" if verbose
+    ret = `git #{args} 2> /dev/null`.chomp
+    $?.to_i == 0 ? ret : default_value
   end
 end
 
 class JohnnyFive
-  SKIP_FILE=".skip-ci"
-
   attr_accessor :component
-  attr_accessor :verbose
   attr_accessor :touch
-  alias verbose? verbose
+  attr_accessor :file_list
+
+  def initialize
+    @file_list = TravisParser.new
+  end
 
   def parse(argv = ARGV, env = ENV)
-    self.verbose   = argv.detect { |arg| arg == "-v" } || true # always verbose for now
     self.touch     = argv.detect { |arg| arg == "-t" } || true # always create file
     self.component = env["TEST_SUITE"] || env["GEM"]
     file_list.parse(argv, env)
-  end
-
-  def verbose=(val)
-    @verbose = val
-    file_list.verbose = val
-  end
-
-  def file_list
-    @file_list ||= TravisParser.new
-  end
-
-  def inform
-    file_list.inform(component)
-  end
-
-  def changed_files
-    file_list.changed_files
-  end
-
-  def parse(argv, env)
-    file_list.parse(env)
     self
   end
 
-  # actions
-
-  def skip(justification = nil)
-    justification = "SKIPPING: #{justification}\n"
-    puts justification
-    File.write(SKIP_FILE, justification)
-  end
-
   def run
-    inform
-    #skip("Im being trigger happy") if pr?
+    file_list.inform(component)
+    file_list.compare_commits
+    file_list.compare_files
+    run_it, reason = determine_course_of_action
+    skip!(reason) unless run_it
   end
 
-  def self.run(argv, env)
-    instance.parse(argv, env).run
+  # logic
+  def skip!(reason)
+    puts "skipping: #{reason}"
   end
 
-  ## configuration DSL
+  def determine_course_of_action
+    #cfg.build :pr => false, :branch => "master" # always build master
+    if !file_list.pr?
+      if file_list.branch == "master"
+        [true, "building non-PR, branch: master"]
+      else
+        [false, "skipping non-PR, branch: (not master)"]
+      end
+    #cfg.build :pr => true, :match => :component, :suffix => "-spec"
+    else
+      target_component = "#{component}#{"-spec"}"
+      if triggered?(target_component)
+        [true, "building PR, changed component"]
+      else
+        [false, "skipping PR, non-triggered component"]
+      end
+    end
+  end
+
+  def triggered?(target_name)
+    # in the filelist - determine which targets were triggered
+    #return true if we can find target in there (or :all came back)
+    true
+  end
 
   def self.instance
     @instance ||= new
   end
 
-  # a file that triggers 
-  def file(glob, target, options = nil)
-  end
+  # dsl
 
-  alias :test :file
 
-  def trigger(src_target, dependent_target)
-  end
+  # main entry
 
-  def self.config
-    yield instance
+  def self.run(argv, env)
+    instance.parse(argv, env).run
   end
 end
 
 if __FILE__ == $PROGRAM_NAME
-  JohnnyFive.config do |cfg|
-    cfg.file "Gemfile",                        %w(controllers models), :exact => true
-    cfg.file "app/{assets,controllers,views}", "controllers"
-    cfg.file "app/models",                     "models"
-    cfg.file "app/helpers",                    "controllers"
-    cfg.file "{bin,build_tools}",              :none
-    cfg.file "gems/one",                       "one", :except => %{gems/one/test}
-    cfg.file "public",                         "controllers"
-    cfg.file "vendor",                         "controllers"
-
-    cfg.test "test/{controllers,views}",       "controllers-spec", :ext => "_spec.rb"
-    cfg.test "test/fixtures",                  %w(models)
-    cfg.test "test/helpers",                   "controllers-spec"
-    cfg.test "test/integration",               "controllers-spec"
-    cfg.test "test/models",                    "models-spec"
-    cfg.test "test/test_helper.rb",            :all
-
-    cfg.trigger "models",                      "controllers"
-    cfg.trigger "one",                         %(controllers models)
-  end
+  $stdout.sync = true
+  $stderr.sync = true
 
   JohnnyFive.run(ARGV, ENV)
 end
