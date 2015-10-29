@@ -42,12 +42,12 @@ class TravisParser
     @first_commit ||= commit_range.split("...").first || ""
   end
 
-  def last_commit
-    @last_commit ||= commit_range.split("...").last || ""
+  def last_commit_alt
+    @last_commit_alt ||= commit_range.split("...").last || ""
   end
 
-  def last_commit_alt
-    @last_commit_alt ||= git("rev-list -n 1 FETCH_HEAD^2").chomp
+  def last_commit
+    @last_commit ||= git("rev-list -n 1 FETCH_HEAD^2").chomp
   end
 
   def file_ref
