@@ -61,22 +61,23 @@ class TravisParser
         # unfortunatly, pushes to a PR will immediately affect a running job.
         [
           "-m --first-parent -1 FETCH_HEAD",
-          "-m --first-parent FETCH_HEAD~1...FETCH_HEAD"
+          "-m --first-parent FETCH_HEAD~1...FETCH_HEAD",
         ]
       elsif single_commit?
         [
+          "#{commit_range}",
+          "#{last_commit}^...#{last_commit}",
           "-m --first-parent -1 #{last_commit_alt}",
           "-m --first-parent -1 #{last_commit}",
           "-m --first-parent #{commit_range}",
-          "#{last_commit}^...#{last_commit}",
-          "#{last_commit_alt}^...#{last_commit_alt}"
+          "#{last_commit_alt}^...#{last_commit_alt}",
         ]
       else
         [
+          "#{commit_range}",
           "--first-parent #{first_commit}...#{last_commit}",
           "--first-parent #{first_commit}...#{last_commit_alt}",
           "--first-parent #{commit_range}",
-          "#{commit_range}"
         ]
       end
     else
@@ -95,7 +96,8 @@ class TravisParser
         #  since sub merges is not common and difficult to distinguish
         #  so punting. (we're building all of master anyway - so no biggie)
       [
-        "--first-parent -m #{commit_range}"
+        "#{commit_range}",
+        "--first-parent -m #{commit_range}",
       ]
     end
   end
@@ -146,9 +148,9 @@ class TravisParser
     puts changed_files.join("\n")
     file_refs.each do |fr|
       puts "======="
-      puts "  #{fr}"
-      puts "======="
-      puts changed_files(fr).join("\n")
+      puts "#{fr}"
+      #puts "======="
+      puts changed_files(fr).map { |c| "  - #{c}" }.join("\n")
     end
     puts "======="
     puts
@@ -182,6 +184,7 @@ class JohnnyFive
   def run
     file_list.inform(component)
     file_list.compare_commits
+    file_list.compare_files
     run_it, reason = determine_course_of_action
     skip!(reason) unless run_it
   end
