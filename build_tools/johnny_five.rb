@@ -184,6 +184,7 @@ class JohnnyFive
   def run
     file_list.inform(component)
     file_list.compare_commits
+    file_list.compare_files
     run_it, reason = determine_course_of_action
     skip!(reason) unless run_it
   end
