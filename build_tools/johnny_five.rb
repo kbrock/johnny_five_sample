@@ -145,7 +145,6 @@ class TravisParser
 
   def compare_files
     puts "FILES:"
-    puts changed_files.join("\n")
     file_refs.each do |fr|
       puts "======="
       puts "#{fr}"
