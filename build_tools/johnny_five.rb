@@ -1,39 +1,21 @@
 #!/usr/bin/env ruby
 
-# see also https://github.com/travis-ci/travis-ci/issues/5007
-# env vars: http://docs.travis-ci.com/user/environment-variables/#Default-Environment-Variables
-# base code: https://github.com/TechEmpower/FrameworkBenchmarks/blob/master/toolset/run-ci.py#L53
+# Get files or commits for a given pull request / commit
 class TravisParser
   # @return <String> pull request number ("false" if this is a branch)
   attr_accessor :pr
   # branch being built (for a pr, target branch / typically master)
   attr_accessor :branch
-  attr_accessor :commit
   attr_accessor :commit_range
-
-  def initialize(options = {})
-    options.each do |n, v|
-      public_send("#{n}=", v)
-    end
-  end
 
   def parse(_argv = ARGV, env = ENV)
     @pr     = env['TRAVIS_PULL_REQUEST']
     @branch = env['TRAVIS_BRANCH']
-    @commit = env['TRAVIS_COMMIT']
     @commit_range = env['TRAVIS_COMMIT_RANGE'] || ""
   end
 
   def first_commit
     commit_range.split("...").first || ""
-  end
-
-  def last_commit_alt
-    commit_range.split("...").last || ""
-  end
-
-  def last_commit
-    @last_commit ||= git("rev-list -n 1 FETCH_HEAD^2")
   end
 
   def pr?
@@ -44,112 +26,48 @@ class TravisParser
     first_commit != ""
   end
 
-  # There is only one commit in the pull request so far,
-  # or Travis-CI is not yet passing the commit range properly
-  # for pull requests. We examine just the one commit using -1
-  #
-  # On the oddball chance that it's a merge commit, we pray
-  # it's a merge from upstream and also pass --first-parent
   def single_commit?
-    commit_range? && (first_commit == last_commit)
+    !commit_range.include?("...")
   end
 
-  def file_refs
-    if pr?
-      if !commit_range?
-        # use the filelist from auto merge
-        # unfortunatly, pushes to a PR will immediately affect a running job.
-        [
-          "-m --first-parent -1 FETCH_HEAD",
-          "-m --first-parent FETCH_HEAD~1...FETCH_HEAD",
-        ]
-      elsif single_commit?
-        [
-          "#{commit_range}",
-          "#{last_commit}^...#{last_commit}",
-          "-m --first-parent -1 #{last_commit_alt}",
-          "-m --first-parent -1 #{last_commit}",
-          "-m --first-parent #{commit_range}",
-          "#{last_commit_alt}^...#{last_commit_alt}",
-        ]
-      else
-        [
-          "#{commit_range}",
-          "--first-parent #{first_commit}...#{last_commit}",
-          "--first-parent #{first_commit}...#{last_commit_alt}",
-          "--first-parent #{commit_range}",
-        ]
-      end
+  def file_ref
+    if !commit_range? # havent seen this
+      "FETCH_HEAD^...FETCH_HEAD"
+    elsif single_commit? # havent seen this
+      "#{first_commit}^...#{first_commit}"
     else
-        # Three main scenarios to consider
-        #  - 1 One non-merge commit pushed to master
-        #  - 2 One merge commit pushed to master (e.g. a PR was merged).
-        #      This is an example of merging a topic branch
-        #  - 3 Multiple commits pushed to master
-        #
-        #  1 and 2: show changes brought into master for the one commit.
-        #  ==> `git log -1 COMMIT`.
-        #  ==> `--first-parent -m` handles merges of sub-topic branchs
-        #
-        #  3: compare all merged into master
-        #  ==> to include sub merges, best to not use `--first-parent`
-        #  since sub merges is not common and difficult to distinguish
-        #  so punting. (we're building all of master anyway - so no biggie)
-      [
-        "#{commit_range}",
-        "--first-parent -m #{commit_range}",
-      ]
+      commit_range
     end
   end
 
-  def changed_files(ref = file_refs.first)
+  def file_refs
+    [file_ref]
+  end
+
+  def files(ref = file_ref)
     #git("diff --name-only #{ref}").split("\n").uniq.sort
     git("log --name-only --pretty=\"format:\" #{ref}", "").split("\n").uniq.sort
   end
 
-  def commits(ref = file_refs.first)
+  def commits(ref = file_ref)
     git("log --oneline --decorate #{ref}", "").split("\n")
   end
 
   def inform(component = "build")
-    if pr?
-      puts "PR           : #{branch}"
-      puts "COMMIT_RANGE : #{commit_range}" #if single_commit? || !commit_range?
-      puts "first_commit : #{first_commit}"
-      puts "last_commit  : #{last_commit_alt} : git: #{last_commit if last_commit_alt != last_commit}"
-    else
-      puts "BRANCH       : #{branch}"
-      puts "first_commit : #{first_commit}"
-      puts "last_commit  : #{last_commit_alt} (branch has no alt)"
-    end
-    puts "FETCH_HEAD   : #{git("rev-parse FETCH_HEAD   2>/dev/null")} (debug)"
-    puts "FETCH_HEAD   : #{git("rev-parse FETCH_HEAD^1 2>/dev/null")} (debug)"
-    puts "FETCH_HEAD^2 : #{git("rev-parse FETCH_HEAD^2 2>/dev/null")} (debug)"
-    puts "COMMIT       : #{commit || "EMPTY"}" if !commit || commit != last_commit_alt
+    puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
+    puts "COMMIT_RANGE : #{commit_range}"
     puts "component    : #{component}"
-    puts "file ref     : #{file_refs.first}"
+    puts "file ref     : #{file_ref}"
   end
 
-  def compare_commits
+  # pass in &:commits or &:files
+  def compare
     puts
     puts "COMMITS:"
     file_refs.each do |fr|
       puts "======="
       puts "#{fr}"
-      #puts "======="
-      puts commits(fr).map { |c| "  - #{c}" }.join("\n")
-    end
-    puts "======="
-    puts
-  end
-
-  def compare_files
-    puts "FILES:"
-    file_refs.each do |fr|
-      puts "======="
-      puts "#{fr}"
-      #puts "======="
-      puts changed_files(fr).map { |c| "  - #{c}" }.join("\n")
+      puts yield(fr).map { |c| "  - #{c}" }.join("\n")
     end
     puts "======="
     puts
