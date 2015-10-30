@@ -12,13 +12,19 @@ class JohnnyFive
     attr_accessor :component
     # @return <String|Nil> suffix for test suite name (e.g.: -spec)
     attr_accessor :suffix
+    # @return <Array<String>> list of variables that will hold the component name
+    attr_accessor :component_name
     attr_accessor :verbose
+
+    def initialize
+      @component_name = []
+    end
 
     def parse(_argv, env)
       @pr     = env['TRAVIS_PULL_REQUEST']
       @branch = env['TRAVIS_BRANCH']
       @commit_range = env['TRAVIS_COMMIT_RANGE'] || ""
-      @component = env['TEST_SUITE'] || env['GEM'] || ""
+      @component = component_name.detect { |name| env[name] } || ""
       self
     end
 
@@ -239,6 +245,7 @@ if __FILE__ == $PROGRAM_NAME
 
   JohnnyFive.config do |cfg|
     cfg.suffix = "-spec"
+    cfg.component_name += %w(TEST_SUITE GEM)
     cfg.verbose = true
     # only build master branch (and PRs)
     cfg.branches << "master"
