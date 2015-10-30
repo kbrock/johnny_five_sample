@@ -18,9 +18,11 @@ matrix:
 #addons:
 #  postgresql: '9.4'
 before_install:
+- export TD=${TRAVIS_BUILD_DIR}
 - ruby ${TRAVIS_BUILD_DIR}/build_tools/johnny_five.rb
-- source ${TRAVIS_BUILD_DIR}/build_tools/before_install.sh
+- [[ -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] || source ${TRAVIS_BUILD_DIR}/build_tools/before_install.sh
 before_script:
-- source ${TRAVIS_BUILD_DIR}/build_tools/before_script.sh
+- echo "TD: ${TD}"
+- [[ -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] || source ${TRAVIS_BUILD_DIR}/build_tools/before_script.sh
 script:
-- bundle exec rake ${TEST_SUITE+test:$TEST_SUITE}
+- [[ -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] || bundle exec rake ${TEST_SUITE+test:$TEST_SUITE}
