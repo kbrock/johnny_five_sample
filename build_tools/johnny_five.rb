@@ -12,13 +12,13 @@ class JohnnyFive
     attr_accessor :component
     # @return <String|Nil> suffix for test suite name (e.g.: -spec)
     attr_accessor :suffix
+    attr_accessor :verbose
 
     def parse(_argv, env)
       @pr     = env['TRAVIS_PULL_REQUEST']
       @branch = env['TRAVIS_BRANCH']
       @commit_range = env['TRAVIS_COMMIT_RANGE'] || ""
       @component = env['TEST_SUITE'] || env['GEM'] || ""
-      @suffix = "-spec"
       self
     end
 
@@ -28,6 +28,10 @@ class JohnnyFive
 
     def target
       "#{component}#{suffix}"
+    end
+
+    def range=(value)
+      @commit_range = val
     end
 
     # @return <String> commit range (e.g.: begin...end commit)
@@ -41,6 +45,13 @@ class JohnnyFive
       end
     end
 
+    def list(name, entries = nil)
+      puts "======="
+      puts "#{name}"
+      puts (entries || yield).map { |fn| " - #{fn}" }
+      puts
+    end
+
     def files(ref = range)
       git("log --name-only --pretty=\"format:\" #{ref}").split("\n").uniq.sort
     end
@@ -50,11 +61,12 @@ class JohnnyFive
     end
 
     def inform
+      return self unless verbose
       puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
       puts "COMMIT_RANGE : #{range}#{" (derived from '#{commit_range}')" if range != commit_range}"
-      puts "component    : #{component}"
-      puts "commits", commits
-      puts "files", files
+      puts "COMPONENT    : #{component}"
+      list("COMMITS") { commits }
+      list("FILES") { files }
       self
     end
 
@@ -74,16 +86,20 @@ class JohnnyFive
     def initialize(travis)
       # Travis
       @travis = travis
-      @rules = {}
-      @dependencies = {}
+      @shallow_rules = {}
+      @shallow_dependencies = {}
+      @branches = []
     end
 
     # Hash<String,Array<Regexp>> target and files that will trigger it
-    attr_accessor :rules
+    attr_accessor :shallow_rules
     # Hash<String,Array<String>> target and targets that will trigger it
-    attr_accessor :dependencies
+    attr_accessor :shallow_dependencies
+    # Array<String> branches that will build (all others will be ignored)
+    attr_accessor :branches
 
-    def_delegators :@travis, :pr, :pr?, :branch, :target, :files
+    def_delegators :@travis, :pr, :pr?, :branch, :target, :files, :verbose, :list
+    def_delegators :@travis, :pr=, :branch=, :component=, :suffix=, :range=, :verbose=
 
     def deduce
       if pr?
@@ -93,41 +109,32 @@ class JohnnyFive
           [false, "skipping PR, unchanged: #{target}"]
         end
       else
-        if branch == "master"
+        if branches.empty? || branches.include?(branch)
           [true, "building branch: #{branch}"]
         else
-          [false, "skipping branch: #{branch} (not master)"]
+          [false, "skipping branch: #{branch} (not #{@branch_force.join(", ")})"]
         end
       end
     end
 
-    def all_deps(targets)
-      targets = [targets] unless targets.kind_of?(Array)
-      # require "byebug"
-      # byebug
-      count = 0
-      while(count != targets.size)
-        count = targets.size
-        targets += targets.flat_map { |target| dependencies[target] }
-        targets.compact!
-        targets.uniq!
-      end
-      targets
-    end
-
     def triggered?(target)
-      targets = all_deps(target)
-      regexps = targets.flat_map { |target| rules[target] }.uniq.compact
-
+      targets = dependencies([target, :all])
+      regexps = rules(targets)
       regexp = Regexp.union(regexps)
-
-      puts "detect #{target} --> #{targets.join(", ")}"
-      puts "rex:", regexps.map(&:to_s)
+      list "detect #{target}", targets
+      list "rex:", regexps
       
-      files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" }
+      ret = files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" if verbose && fn }
     end
 
-    # dsl
+    # @return Array[String] files that are not covered by shallow_rules
+    def not_covered
+      all_files = Regexp.union(shallow_rules.values.flatten)
+      files.select { |fn| !all_files.match(fn) }
+    end
+
+    # configuration dsl
+
     def suite(name)
       @suite = name
       yield self
@@ -138,7 +145,7 @@ class JohnnyFive
 
       targets = [targets] unless targets.kind_of?(Array)
       targets.each do |target|
-        (rules[target]||=[]) << regex(glob, options) # TODO: support options[:except]
+        (shallow_rules[target]||=[]) << regex(glob, options) # TODO: support options[:except]
       end
       self
     end
@@ -149,15 +156,39 @@ class JohnnyFive
       src_target, targets = @suite, src_target if targets.nil?
       targets = [targets] unless targets.kind_of?(Array)
       targets.each do |target|
-        (dependencies[target]||=[]) << src_target
+        (shallow_dependencies[target]||=[]) << src_target
       end
       self
+    end
+
+    # private
+
+    def trigger_regex(*targets)
+      Regexp.union(rules(targets))
+    end
+
+    def rules(targets)
+      targets.flat_map { |target| shallow_rules[target] }.uniq.compact
+    end
+
+    def dependencies(targets)
+      count = 0
+      # keep doing this until we stop adding some
+      while(count != targets.size)
+        count = targets.size
+        targets += targets.flat_map { |target| shallow_dependencies[target] }
+        targets.compact!
+        targets.uniq!
+      end
+      targets.flatten! || targets
     end
 
     private
 
     def regex(glob, options)
+      # in the glob world, tack on '**/*#{options[:ext]}'
       ext = ".*#{options[:ext]}" if options[:ext]
+      # would be nice to replace '{' with '(?' to not capture
       /#{glob.tr("{,}","(|)")}#{ext}/
     end
   end
@@ -174,6 +205,7 @@ class JohnnyFive
   def parse(argv, env)
     @touch = "#{env["TRAVIS_BUILD_DIR"]}/.skip-ci"
     travis.parse(argv, env).inform
+    travis.list "UNCOVERED", sherlock.not_covered if travis.verbose
     self
   end
 
@@ -206,13 +238,18 @@ if __FILE__ == $PROGRAM_NAME
   $stderr.sync = true
 
   JohnnyFive.config do |cfg|
+    cfg.suffix = "-spec"
+    cfg.verbose = true
+    # only build master branch (and PRs)
+    cfg.branches << "master"
     cfg.file "Gemfile",                        %w(controllers models), :exact => true
     cfg.file "app/{assets,controllers,views}", "controllers", :ext => ".rb"
     cfg.file "app/models",                     "models", :ext => ".rb"
     cfg.file "app/helpers",                    "controllers", :ext => ".rb"
     cfg.file "bin",                            :none, :ext => ""
-    cfg.file "build_tools",                    :all # temporary, switch to :none when done
-    cfg.file "gems/one",                       "one", :except => %{gems/one/test}, :ext => ""
+    cfg.file "build_tools",                    :none, :ext => ""
+    # except not currently covered
+    cfg.file "gems/one",                       "one", :except => %r{gems/one/test}, :ext => ""
     cfg.file "public",                         "ui", :ext => ""
     cfg.file "vendor",                         "ui", :ext => ""
 
@@ -221,6 +258,7 @@ if __FILE__ == $PROGRAM_NAME
     cfg.test "test/helpers",                   "controllers-spec", :ext => "_spec.rb"
     cfg.test "test/integration",               "ui-spec", :ext => "_spec.rb"
     cfg.test "test/models",                    "models-spec", :ext => "_spec.rb"
+    cfg.file "gems/one/test",                  "one-spec", :ext => ""
     cfg.test "test/test_helper.rb",            :all
 
     cfg.trigger "controllers",                 "ui"
