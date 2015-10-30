@@ -4,7 +4,7 @@ require_relative 'johnny_five'
 
 class TestJohnnyFive < Minitest::Test
   def parser
-    @parser ||= TravisParser.new
+    @parser ||= Travis.new
   end
 
   def test_parse_pr

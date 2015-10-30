@@ -1,149 +1,200 @@
 #!/usr/bin/env ruby
 
-# Get files or commits for a given pull request / commit
-class TravisParser
-  # @return <String> pull request number ("false" if this is a branch)
-  attr_accessor :pr
-  # branch being built (for a pr, target branch / typically master)
-  attr_accessor :branch
-  attr_accessor :commit_range
-
-  def parse(_argv = ARGV, env = ENV)
-    @pr     = env['TRAVIS_PULL_REQUEST']
-    @branch = env['TRAVIS_BRANCH']
-    @commit_range = env['TRAVIS_COMMIT_RANGE'] || ""
-  end
-
-  def first_commit
-    commit_range.split("...").first || ""
-  end
-
-  def pr?
-    @pr != "false"
-  end
-
-  def commit_range?
-    first_commit != ""
-  end
-
-  def single_commit?
-    !commit_range.include?("...")
-  end
-
-  def file_ref
-    if !commit_range? # havent seen this
-      "FETCH_HEAD^...FETCH_HEAD"
-    elsif single_commit? # havent seen this
-      "#{first_commit}^...#{first_commit}"
-    else
-      commit_range
-    end
-  end
-
-  def file_refs
-    [file_ref]
-  end
-
-  def files(ref = file_ref)
-    #git("diff --name-only #{ref}").split("\n").uniq.sort
-    git("log --name-only --pretty=\"format:\" #{ref}", "").split("\n").uniq.sort
-  end
-
-  def commits(ref = file_ref)
-    git("log --oneline --decorate #{ref}", "").split("\n")
-  end
-
-  def inform(component = "build")
-    puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
-    puts "COMMIT_RANGE : #{commit_range}"
-    puts "component    : #{component}"
-    puts "file ref     : #{file_ref}"
-  end
-
-  # pass in &:commits or &:files
-  def compare
-    puts
-    puts "COMMITS:"
-    file_refs.each do |fr|
-      puts "======="
-      puts "#{fr}"
-      puts yield(fr).map { |c| "  - #{c}" }.join("\n")
-    end
-    puts "======="
-    puts
-  end
-
-  private
-
-  def git(args, default_value = nil)
-    # puts "git #{args}" if verbose
-    ret = `git #{args} 2> /dev/null`.chomp
-    $?.to_i == 0 ? ret : default_value
-  end
-end
+require "forwardable"
 
 class JohnnyFive
-  attr_accessor :component
-  attr_accessor :touch
-  attr_accessor :file_list
+  class Travis
+    # @return <String> pull request number (e.g.: "555" or "false" for a branch)
+    attr_accessor :pr
+    # @return <String> branch being built (e.g.: master)
+    attr_accessor :branch
+    # @return <String> component being built
+    attr_accessor :component
+    # @return <String|Nil> suffix for test suite name (e.g.: -spec)
+    attr_accessor :suffix
 
-  def initialize
-    @file_list = TravisParser.new
+    def parse(_argv, env)
+      @pr     = env['TRAVIS_PULL_REQUEST']
+      @branch = env['TRAVIS_BRANCH']
+      @commit_range = env['TRAVIS_COMMIT_RANGE'] || ""
+      @component = env['TEST_SUITE'] || env['GEM'] || ""
+      @suffix = "-spec"
+      self
+    end
+
+    def pr?
+      @pr != "false"
+    end
+
+    def target
+      "#{component}#{suffix}"
+    end
+
+    # @return <String> commit range (e.g.: begin...end commit)
+    def range
+      if commit_range == ""
+        "FETCH_HEAD^...FETCH_HEAD" # HEAD
+      elsif !commit_range.include?("...")
+        "#{commit_range}^...#{commit_range}"
+      else
+        commit_range
+      end
+    end
+
+    def files(ref = range)
+      git("log --name-only --pretty=\"format:\" #{ref}").split("\n").uniq.sort
+    end
+
+    def commits(ref = range)
+      git("log --oneline --decorate #{ref}").split("\n")
+    end
+
+    def inform
+      puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
+      puts "COMMIT_RANGE : #{range}#{" (derived from '#{commit_range}')" if range != commit_range}"
+      puts "component    : #{component}"
+      puts "commits", commits
+      puts "files", files
+      self
+    end
+
+    private
+
+    attr_reader :commit_range
+
+    def git(args, default_value = "")
+      ret = `git #{args} 2> /dev/null`.chomp
+      $?.to_i == 0 ? ret : default_value
+    end
   end
 
-  def parse(argv = ARGV, env = ENV)
-    self.touch     = argv.detect { |arg| arg == "-t" } || true # always create file
-    self.component = env["TEST_SUITE"] || env["GEM"]
-    file_list.parse(argv, env)
+  class Sherlock
+    extend Forwardable
+
+    def initialize(travis)
+      # Travis
+      @travis = travis
+      @rules = {}
+      @dependencies = {}
+    end
+
+    # Hash<String,Array<Regexp>> target and files that will trigger it
+    attr_accessor :rules
+    # Hash<String,Array<String>> target and targets that will trigger it
+    attr_accessor :dependencies
+
+    def_delegators :@travis, :pr, :pr?, :branch, :target, :files
+
+    def deduce
+      if pr?
+        if triggered?(target)
+          [true, "building PR, changed: #{target}"]
+        else
+          [false, "skipping PR, unchanged: #{target}"]
+        end
+      else
+        if branch == "master"
+          [true, "building branch: #{branch}"]
+        else
+          [false, "skipping branch: #{branch} (not master)"]
+        end
+      end
+    end
+
+    def all_deps(targets)
+      targets = [targets] unless targets.kind_of?(Array)
+      # require "byebug"
+      # byebug
+      count = 0
+      while(count != targets.size)
+        count = targets.size
+        targets += targets.flat_map { |target| dependencies[target] }
+        targets.compact!
+        targets.uniq!
+      end
+      targets
+    end
+
+    def triggered?(target)
+      targets = all_deps(target)
+      regexps = targets.flat_map { |target| rules[target] }.uniq.compact
+
+      regexp = Regexp.union(regexps)
+
+      puts "detect #{target} --> #{targets.join(", ")}"
+      puts "rex:", regexps.map(&:to_s)
+      
+      files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" }
+    end
+
+    # dsl
+    def suite(name)
+      @suite = name
+      yield self
+    end
+
+    def file(glob, targets = nil, options = {})
+      targets, options = @suite, targets if targets.kind_of?(Hash)
+
+      targets = [targets] unless targets.kind_of?(Array)
+      targets.each do |target|
+        (rules[target]||=[]) << regex(glob, options) # TODO: support options[:except]
+      end
+      self
+    end
+
+    alias test file
+
+    def trigger(src_target, targets = nil)
+      src_target, targets = @suite, src_target if targets.nil?
+      targets = [targets] unless targets.kind_of?(Array)
+      targets.each do |target|
+        (dependencies[target]||=[]) << src_target
+      end
+      self
+    end
+
+    private
+
+    def regex(glob, options)
+      ext = ".*#{options[:ext]}" if options[:ext]
+      /#{glob.tr("{,}","(|)")}#{ext}/
+    end
+  end
+
+  attr_accessor :touch
+  attr_reader :travis
+  attr_accessor :sherlock
+
+  def initialize
+    @travis = Travis.new
+    @sherlock = Sherlock.new(@travis)
+  end
+
+  def parse(argv, env)
+    @touch = "#{env["TRAVIS_BUILD_DIR"]}/.skip-ci"
+    travis.parse(argv, env).inform
     self
   end
 
   def run
-    file_list.inform(component)
-    file_list.compare_commits
-    file_list.compare_files
-    run_it, reason = determine_course_of_action
+    run_it, reason = sherlock.deduce
     skip!(reason) unless run_it
   end
 
   # logic
   def skip!(reason)
-    puts "skipping: #{reason}"
-  end
-
-  def determine_course_of_action
-    #cfg.build :pr => false, :branch => "master" # always build master
-    if !file_list.pr?
-      if file_list.branch == "master"
-        [true, "building non-PR, branch: master"]
-      else
-        [false, "skipping non-PR, branch: (not master)"]
-      end
-    #cfg.build :pr => true, :match => :component, :suffix => "-spec"
-    else
-      target_component = "#{component}#{"-spec"}"
-      if triggered?(target_component)
-        [true, "building PR, changed component"]
-      else
-        [false, "skipping PR, non-triggered component"]
-      end
-    end
-  end
-
-  def triggered?(target_name)
-    # in the filelist - determine which targets were triggered
-    #return true if we can find target in there (or :all came back)
-    true
+    $stderr.puts "==> #{reason} <=="
+    File.write(touch, reason) if touch
   end
 
   def self.instance
     @instance ||= new
   end
 
-  # dsl
-
-
-  # main entry
+  def self.config
+    yield instance.sherlock
+  end
 
   def self.run(argv, env)
     instance.parse(argv, env).run
@@ -153,6 +204,34 @@ end
 if __FILE__ == $PROGRAM_NAME
   $stdout.sync = true
   $stderr.sync = true
+
+  JohnnyFive.config do |cfg|
+    cfg.file "Gemfile",                        %w(controllers models), :exact => true
+    cfg.file "app/{assets,controllers,views}", "controllers", :ext => ".rb"
+    cfg.file "app/models",                     "models", :ext => ".rb"
+    cfg.file "app/helpers",                    "controllers", :ext => ".rb"
+    cfg.file "bin",                            :none, :ext => ""
+    cfg.file "build_tools",                    :all # temporary, switch to :none when done
+    cfg.file "gems/one",                       "one", :except => %{gems/one/test}, :ext => ""
+    cfg.file "public",                         "ui", :ext => ""
+    cfg.file "vendor",                         "ui", :ext => ""
+
+    cfg.test "test/{controllers,views}",       "controllers-spec", :ext => "_spec.rb"
+    cfg.test "test/fixtures",                  "models", :ext => ""
+    cfg.test "test/helpers",                   "controllers-spec", :ext => "_spec.rb"
+    cfg.test "test/integration",               "ui-spec", :ext => "_spec.rb"
+    cfg.test "test/models",                    "models-spec", :ext => "_spec.rb"
+    cfg.test "test/test_helper.rb",            :all
+
+    cfg.trigger "controllers",                 "ui"
+    cfg.trigger "models",                      "controllers"
+    cfg.trigger "one",                         %w(controllers models)
+
+    cfg.trigger "controllers",                 "controllers-spec"
+    cfg.trigger "models",                      "models-spec"
+    cfg.trigger "one",                         "one-spec"
+    cfg.trigger "ui",                          "ui-spec"
+  end
 
   JohnnyFive.run(ARGV, ENV)
 end
