@@ -19,9 +19,8 @@ matrix:
 #  postgresql: '9.4'
 before_install:
 - ruby ${TRAVIS_BUILD_DIR}/build_tools/johnny_five.rb
-- '[[ ! -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] || export SKIP=$(< ${TRAVIS_BUILD_DIR}/.skip-ci)'
-- 'source ${TRAVIS_BUILD_DIR}/build_tools/before_install.sh'
+- source ${TRAVIS_BUILD_DIR}/build_tools/before_install.sh
 before_script:
-- '[[ -n "$SKIP" ]] && echo "$SKIP" || source ${TRAVIS_BUILD_DIR}/build_tools/before_script.sh'
+- source ${TRAVIS_BUILD_DIR}/build_tools/before_script.sh
 script:
-- '[[ -n "$SKIP" ]] && echo "$SKIP" || bundle exec rake ${TEST_SUITE+test:$TEST_SUITE}'
+- bundle exec rake ${TEST_SUITE+test:$TEST_SUITE}
