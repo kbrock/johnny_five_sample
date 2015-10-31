@@ -104,8 +104,8 @@ class JohnnyFive
     # Array<String> branches that will build (all others will be ignored)
     attr_accessor :branches
 
-    def_delegators :@travis, :pr, :pr?, :branch, :target, :files, :verbose, :list
-    def_delegators :@travis, :pr=, :branch=, :component=, :suffix=, :range=, :verbose=
+    def_delegators :@travis, :pr, :pr?, :branch, :target, :files, :verbose, :list, :component_name
+    def_delegators :@travis, :pr=, :branch=, :component=, :suffix=, :range=, :verbose=, :component_name=
 
     def deduce
       if pr?
