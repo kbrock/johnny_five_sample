@@ -24,7 +24,7 @@ class JohnnyFive
       @pr     = env['TRAVIS_PULL_REQUEST']
       @branch = env['TRAVIS_BRANCH']
       @commit_range = env['TRAVIS_COMMIT_RANGE'] || ""
-      @component = component_name.detect { |name| env[name] } || ""
+      @component = component_name.inject(nil) { |memo, name| memo || env[name] } || ""
       self
     end
 
@@ -121,7 +121,7 @@ class JohnnyFive
         if branches.empty? || branches.include?(branch)
           [true, "building branch: #{branch}"]
         else
-          [false, "skipping branch: #{branch} (not #{@branch_force.join(", ")})"]
+          [false, "skipping branch: #{branch} (not #{branches.join(", ")})"]
         end
       end
     end
