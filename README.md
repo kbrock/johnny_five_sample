@@ -1,6 +1,6 @@
 # JohnnyFive Sample
 
-![build status](https://travis-ci.org/kbrock/johnny_five_sample.svg)
+[![Build Status](https://travis-ci.org/kbrock/johnny_five_sample.svg)](https://travis-ci.org/kbrock/johnny_five_sample)
 
 - [ ] You have a big project
 - [ ] You split up the project into multiple sub-projects.
