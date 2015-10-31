@@ -51,11 +51,14 @@ class JohnnyFive
       end
     end
 
-    def list(name, entries = nil)
-      puts "======="
-      puts "#{name}"
-      puts (entries || yield).map { |fn| " - #{fn}" }
-      puts
+    def list(name, always_display = true)
+      entries = yield
+      if always_display || !entries.empty?
+        puts "======="
+        puts "#{name}"
+        puts entries.map { |fn| " - #{fn}" }
+        puts
+      end
     end
 
     def files(ref = range)
@@ -72,7 +75,7 @@ class JohnnyFive
       puts "COMMIT_RANGE : #{range}#{" (derived from '#{commit_range}')" if range != commit_range}"
       puts "COMPONENT    : #{component}"
       list("COMMITS") { commits }
-      list("FILES") { files }
+      list("FILES") { files } if verbose
       self
     end
 
@@ -127,8 +130,8 @@ class JohnnyFive
       targets = dependencies([target, :all])
       regexps = rules(targets)
       regexp = Regexp.union(regexps)
-      list "detect #{target}", targets
-      list "rex:", regexps
+      list("DETECT #{target}") { targets }
+      list("REGEX:") { regexps } if verbose
       
       ret = files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" if verbose && fn }
     end
@@ -211,7 +214,7 @@ class JohnnyFive
   def parse(argv, env)
     @touch = "#{env["TRAVIS_BUILD_DIR"]}/.skip-ci"
     travis.parse(argv, env).inform
-    travis.list "UNCOVERED", sherlock.not_covered if travis.verbose
+    travis.list("UNCOVERED", false) { sherlock.not_covered } if travis.verbose
     self
   end
 
