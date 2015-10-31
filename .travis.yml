@@ -18,11 +18,10 @@ matrix:
 #addons:
 #  postgresql: '9.4'
 before_install:
-- export TD=${TRAVIS_BUILD_DIR}
 - ruby ${TRAVIS_BUILD_DIR}/build_tools/johnny_five.rb
-- [[ -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] || source ${TRAVIS_BUILD_DIR}/build_tools/before_install.sh
+- '[[ ! -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] || export SKIP=true'
+- '[[ -n "$SKIP" ]] || source ${TRAVIS_BUILD_DIR}/build_tools/before_install.sh'
 before_script:
-- echo "TD: ${TD}"
-- [[ -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] || source ${TRAVIS_BUILD_DIR}/build_tools/before_script.sh
+- '[[ -n "$SKIP" ]] || source ${TRAVIS_BUILD_DIR}/build_tools/before_script.sh'
 script:
-- [[ -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] || bundle exec rake ${TEST_SUITE+test:$TEST_SUITE}
+- '[[ -n "$SKIP" ]] || bundle exec rake ${TEST_SUITE+test:$TEST_SUITE}'
