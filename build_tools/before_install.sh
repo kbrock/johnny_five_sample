@@ -3,15 +3,14 @@
 #   BUNDLE_GEMFILE
 #   BUNDLE_WITHOUT
 #   PWD
+#   SKIP
 
 echo "gem: --no-ri --no-rdoc --no-document" > ~/.gemrc
 
 if [[ -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] ; then
-  echo "skipping before_install"
-  cat ${TRAVIS_BUILD_DIR}/.skip-ci
-
   # change into a directory with minimal environment
   # this will NOP the rest of the build
+  export SKIP=$(<${TRAVIS_BUILD_DIR}/.skip-ci)
   cd build_tools
 elif [[ -n "${GEM}" ]] ; then
   cd gems/${GEM}

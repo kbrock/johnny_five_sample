@@ -1,6 +1,5 @@
-if [[ -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] ; then
-  echo "skipping before_script"
-  cat ${TRAVIS_BUILD_DIR}/.skip-ci
+if [[ -f "${TRAVIS_BUILD_DIR}/.skip-ci" ]] ; then
+  :
 elif [[ -n "$TEST_SUITE" ]] ; then
   if [[ -n "$SPA_UI" ]] ; then
     pushd spa_ui/$SPA_UI

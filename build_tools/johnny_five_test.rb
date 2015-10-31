@@ -4,7 +4,7 @@ require_relative 'johnny_five'
 
 class TestJohnnyFive < Minitest::Test
   def parser
-    @parser ||= Travis.new
+    @parser ||= JohnnyFive::Travis.new
   end
 
   def test_parse_pr
@@ -17,7 +17,7 @@ class TestJohnnyFive < Minitest::Test
     assert_equal "master", parser.branch
     assert_equal "1", parser.pr
     assert_equal true, parser.pr?
-    assert_equal "9e59113ba4...d19278a8f6", parser.commit_range
+    assert_equal "9e59113ba4...d19278a8f6", parser.range
   end
 
   def test_parse_master
@@ -30,7 +30,7 @@ class TestJohnnyFive < Minitest::Test
     assert_equal "master", parser.branch
     assert_equal "false", parser.pr
     assert_equal false, parser.pr?
-    assert_equal "9e59113ba4...9130838e79", parser.commit_range
+    assert_equal "9e59113ba4...9130838e79", parser.range
   end
 end
 
