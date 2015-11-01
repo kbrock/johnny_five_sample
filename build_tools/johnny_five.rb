@@ -14,6 +14,7 @@ class JohnnyFive
     attr_accessor :suffix
     # @return <Array<String>> list of variables that will hold the component name
     attr_accessor :component_name
+    # @return <Boolean> true to show verbose messages
     attr_accessor :verbose
 
     def initialize
@@ -25,15 +26,13 @@ class JohnnyFive
       @branch = env['TRAVIS_BRANCH']
       @commit_range = env['TRAVIS_COMMIT_RANGE'] || ""
       @component = component_name.inject(nil) { |memo, name| memo || env[name] } || ""
+      @component = "#{@component}#{suffix}" if @component
+
       self
     end
 
     def pr?
       @pr != "false"
-    end
-
-    def target
-      "#{component}#{suffix}"
     end
 
     def range=(value)
@@ -107,19 +106,19 @@ class JohnnyFive
     # Array<String> branches that will build (all others will be ignored)
     attr_accessor :branches
 
-    def_delegators :@travis, :pr, :pr?, :branch, :target, :files, :verbose, :list, :component_name
-    def_delegators :@travis, :pr=, :branch=, :component=, :suffix=, :range=, :verbose=, :component_name=
+    def_delegators :@travis, :pr, :pr?, :branch, :component, :files, :verbose, :list, :component_name
+    def_delegators :@travis, :pr=, :branch=, :suffix=, :range=, :verbose=, :component_name=
 
     def deduce
       if pr?
-        if component_name.empty? || triggered?(target)
-          [true, "building PR, changed: #{target}"]
+        if component.empty? || triggered?(component)
+          [true, "building PR for #{component || "none specified"}"]
         else
-          [false, "skipping PR, unchanged: #{target}"]
+          [false, "skipping PR for unchanged: #{component}"]
         end
       else
-        if branches.empty? || branches.include?(branch)
-          [true, "building branch: #{branch}"]
+        if branch.empty? || branches.empty? || branches.include?(branch)
+          [true, "building branch: #{branch || "none specified"}"]
         else
           [false, "skipping branch: #{branch} (not #{branches.join(", ")})"]
         end
@@ -133,10 +132,10 @@ class JohnnyFive
       list("DETECT #{target}") { targets }
       list("REGEX:") { regexps } if verbose
       
-      ret = files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" if verbose && fn }
+      files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" if verbose && fn }
     end
 
-    # @return Array[String] files that are not covered by shallow_rules
+    # @return Array[String] files that are not covered by any rules
     def not_covered
       all_files = Regexp.union(shallow_rules.values.flatten)
       files.select { |fn| !all_files.match(fn) }
