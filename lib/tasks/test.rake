@@ -15,6 +15,11 @@ Rake::TestTask.new("test:models") do |t|
   t.pattern = "test/models/**/*_test.rb"
 end
 
+Rake::TestTask.new("test:j5") do |t|
+  t.libs << "build_tools"
+  t.pattern = "build_tools/*_test.rb"
+end
+
 namespace :test do
   task :setup => %w(db:create db:migrate db:schema:dump db:test:prepare)
 
@@ -28,5 +33,9 @@ namespace :test do
 
   namespace :models do
     task :setup => "test:setup"
+  end
+
+  namespace :j5 do
+    task :setup
   end
 end

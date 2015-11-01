@@ -12,6 +12,7 @@ env:
   - TEST_SUITE=controllers
   - TEST_SUITE=models
   - TEST_SUITE=ui
+  - TEST_SUITE=j5
   - GEM=one
 matrix:
   fast_finish: true
