@@ -112,7 +112,7 @@ class JohnnyFive
 
     def deduce
       if pr?
-        if triggered?(target)
+        if component_name.empty? || triggered?(target)
           [true, "building PR, changed: #{target}"]
         else
           [false, "skipping PR, unchanged: #{target}"]
@@ -202,6 +202,7 @@ class JohnnyFive
     end
   end
 
+  # name of file to touch if there is a match
   attr_accessor :touch
   attr_reader :travis
   attr_accessor :sherlock
@@ -213,12 +214,13 @@ class JohnnyFive
 
   def parse(argv, env)
     @touch = "#{env["TRAVIS_BUILD_DIR"]}/.skip-ci"
-    travis.parse(argv, env).inform
-    travis.list("UNCOVERED", false) { sherlock.not_covered } if travis.verbose
+    travis.parse(argv, env)
     self
   end
 
   def run
+    travis.inform
+    travis.list("UNCOVERED", false) { sherlock.not_covered } if travis.verbose
     run_it, reason = sherlock.deduce
     skip!(reason) unless run_it
   end
@@ -247,9 +249,11 @@ if __FILE__ == $PROGRAM_NAME
   $stderr.sync = true
 
   JohnnyFive.config do |cfg|
-    cfg.suffix = "-spec"
-    cfg.component_name += %w(TEST_SUITE GEM)
     cfg.verbose = true
+    # only build PRs for the correct component
+    # use one of these env vars (and suffix) to determine name
+    cfg.component_name += %w(TEST_SUITE GEM)
+    cfg.suffix = "-spec"
     # only build master branch (and PRs)
     cfg.branches << "master"
     cfg.file "Gemfile",                        %w(controllers models), :exact => true
@@ -258,7 +262,7 @@ if __FILE__ == $PROGRAM_NAME
     cfg.file "app/helpers",                    "controllers", :ext => ".rb"
     cfg.file "bin",                            :none, :ext => ""
     cfg.file "build_tools",                    :none, :ext => ""
-    # except not currently covered
+    # TODO: except not currently supported
     cfg.file "gems/one",                       "one", :except => %r{gems/one/test}, :ext => ""
     cfg.file "public",                         "ui", :ext => ""
     cfg.file "vendor",                         "ui", :ext => ""
