@@ -7,41 +7,46 @@ JohnnyFive.config do |matrix|
   # models: Gemfile, one
   matrix.suite %w(controllers models) do |cfg|
     cfg.file "Gemfile", :exact => true
+    cfg.file "config", :ext => ""
     cfg.trigger "one"
   end
 
   # models: app/models/**/*.rb, test/fixtures
   matrix.suite "models" do |cfg|
     cfg.file "app/models", :ext => ".rb"
+    cfg.file "db", :ext => ".rb"
     cfg.test "test/fixtures", :ext => ""
   end
 
-  # models-spec: test/models/**/*_spec.rb, models
+  # models-spec: test/models/**/*_test.rb, models
   matrix.suite "models-spec" do |cfg|
-    cfg.test "test/models", :ext => "_spec.rb"
+    cfg.test "test/models", :ext => "_test.rb"
     cfg.trigger "models"
   end
 
   matrix.suite "controllers" do |cfg|
-    cfg.file "app/{assets,controllers,views}", :ext => ".rb"
+    cfg.file "app/{controllers,views}", :ext => ".rb"
+    cfg.file "app/views", :ext => ".jbuilder"
     cfg.file "app/helpers", :ext => ".rb"
     cfg.trigger "models"
   end
 
   matrix.suite "controllers-spec" do |cfg|
-    cfg.test "test/{controllers,views}", :ext => "_spec.rb"
-    cfg.test "test/helpers", :ext => "_spec.rb"
+    cfg.test "test/{controllers,views}", :ext => "_test.rb"
+    cfg.test "test/helpers", :ext => "_test.rb"
     cfg.trigger "controllers"
   end
 
   matrix.suite "ui" do |cfg|
+    cfg.file "app/assets", :ext => ""
+    cfg.file "config", :ext => ""
     cfg.file "public", :ext => ""
     cfg.file "vendor", :ext => ""
     cfg.trigger "controller"
   end
 
   matrix.suite "ui-spec" do |cfg|
-    cfg.test "test/integration", :ext => "_spec.rb"
+    cfg.test "test/integration", :ext => "_test.rb"
     cfg.trigger "ui"
   end
 
@@ -55,8 +60,14 @@ JohnnyFive.config do |matrix|
   end
 
   matrix.suite :none do |cfg|
+    cfg.file "README.md", :exact => true
+    cfg.file "Rakefile", :exact => true
+
     cfg.file "bin", :ext => ""
     cfg.file "build_tools", :ext => ""
+    cfg.file "log", :ext => ""
+    cfg.file "lib/tasks", :ext => ""
+    cfg.file "tmp", :ext => ""
   end
 
   matrix.suite :all do |cfg|
