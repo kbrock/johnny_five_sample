@@ -32,6 +32,8 @@ class JohnnyFive
     attr_accessor :branch
     # @return [Boolean] true if the changed files should be validated against rules
     attr_accessor :check
+    # @return [Boolean] true if every file on the fs should be validated against rules
+    attr_accessor :check_all
     # @return [String] the commits that have changed for this build (e.g.: first_commit...last_commit)
     attr_accessor :commit_range
     # @return [String] component being built
@@ -133,7 +135,7 @@ class JohnnyFive
       targets = dependencies([target, :all])
       regexps = rules(targets)
       regexp = Regexp.union(regexps)
-      list("DETECT #{target}") { targets } if verbose || check
+      list("DETECT:") { targets } if verbose || check
       list("REGEX:") { regexps } if check
 
       src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by #{fn}" if fn }
@@ -180,7 +182,7 @@ class JohnnyFive
 
     attr_reader :sherlock, :travis, :main
     def_delegators :@sherlock, :branches, :branches=, :shallow_rules, :shallow_dependencies
-    def_delegators :@travis, :branch=, :check=, :commit_range=, :component=, :verbose=
+    def_delegators :@travis, :branch=, :check=, :check_all=, :commit_range=, :component=, :verbose=
     def_delegators :@main, :exit_value=, :touch=
 
     def suite(name)
@@ -237,6 +239,7 @@ class JohnnyFive
       opt(opts, travis, env) do |o|
         o.opt(:branch, "TRAVIS_BRANCH", "--branch STRING", "Branch being built")
         o.opt(:check, "--check", "validate that there is a rule for all changed files")
+        o.opt(:check_all, "--check-all", "validate that every file on the filesystem has a rule")
         o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
         o.opt(:component, "--component STRING", "name of component being built")
         o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
@@ -255,9 +258,14 @@ class JohnnyFive
 
   def run
     travis.inform
-    travis.list("UNCOVERED", false) { sherlock.not_covered } if travis.check
+    travis.list("UNCOVERED:", false) { sherlock.not_covered } if travis.check
     run_it, reason = sherlock.deduce
+    travis.list("ALL UNCOVERED:", false) { sherlock.not_covered all_files } if travis.check_all
     skip!(reason) unless run_it
+  end
+
+  def all_files
+    Dir['**/*'].select { |fn| !fn.start_with?('tmp/') && File.file?(fn) }
   end
 
   # logic
