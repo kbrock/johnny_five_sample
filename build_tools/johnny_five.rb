@@ -17,7 +17,7 @@ class JohnnyFive
         env = args.shift
         ev = ENV[env]
         @model.send("#{value}=", ev) if ev
-        args.last << " (currently #{env} is #{ev || "not set"})"
+        args.last << " (#{env}=#{ev || "<not set>"})"
       end
       @opts.on(*args) { |v| @model.send("#{value}=", v) }
     end
@@ -216,20 +216,18 @@ class JohnnyFive
 
   def parse(argv, env)
     options = OptionParser.new do |opts|
-      opts.program_name = "audio_book_creator"
       opts.version = VERSION
-      opts.banner = "Usage: johnny_five.rb [options] [title] url [url] [...]"
       opt(opts, travis) do |o|
         o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
-        o.opt(:component, "-c STRING", "--component STRING", "name of component being built e.g.: controllers-spec")
         o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
         o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
         o.opt(:branch, "TRAVIS_BRANCH", "--branch STRING", "Branch being built")
+        o.opt(:component, "--component STRING", "name of component being built")
       end
       opt(opts, self) do |o|
-        o.opt(:touch, "--touch STRING", "file to touch if the build has not changed")
-        o.opt(:exit_value, "--exit NUMBER", "exit value if build has not changed")
-        o.opt(:check, "--check", "validate that all changed files have a corresponding rule")
+        o.opt(:touch, "--touch STRING", "if the build has not changed, touch this file")
+        o.opt(:exit_value, "--exit NUMBER", "if the build did not change, exit with this")
+        o.opt(:check, "--check", "validate that there is a rule for all changed files")
       end
     end
     options.parse!(argv)
