@@ -1,8 +1,32 @@
 #!/usr/bin/env ruby
 
-require "forwardable"
+require 'forwardable'
+require 'optionparser'
 
 class JohnnyFive
+  VERSION = "0.0.3"
+
+  class OptSetter
+    def initialize(opts, model)
+      @opts  = opts
+      @model = model
+    end
+
+    def opt(value, *args)
+      unless args[0].start_with?("-") # support environment variable being specified
+        env = args.shift
+        ev = ENV[env]
+        @model.send("#{value}=", ev) if ev
+        args.last << " (currently #{env} is #{ev || "not set"})"
+      end
+      @opts.on(*args) { |v| @model.send("#{value}=", v) }
+    end
+  end
+
+  def opt(opts, model)
+    yield OptSetter.new(opts, model)
+  end
+
   class Travis
     # @return <String> pull request number (e.g.: "555" or "false" for a branch)
     attr_accessor :pr
@@ -10,28 +34,17 @@ class JohnnyFive
     attr_accessor :branch
     # @return <String> component being built
     attr_accessor :component
-    # @return <String|Nil> suffix for test suite name (e.g.: -spec)
-    attr_accessor :suffix
-    # @return <Array<String>> list of variables that will hold the component name
-    attr_accessor :component_name
     # @return <Boolean> true to show verbose messages
     attr_accessor :verbose
-
-    def initialize
-      @component_name = []
-    end
+    attr_accessor :commit_range
 
     def pr?
       @pr != "false"
     end
 
-    def range=(value)
-      @commit_range = value
-    end
-
     # @return <String> commit range (e.g.: begin...end commit)
     def range
-      if commit_range == ""
+      if commit_range == "" || commit_range.nil?
         "FETCH_HEAD^...FETCH_HEAD" # HEAD
       elsif !commit_range.include?("...")
         "#{commit_range}^...#{commit_range}"
@@ -70,11 +83,9 @@ class JohnnyFive
 
     private
 
-    attr_reader :commit_range
-
     def git(args, default_value = "")
       ret = `git #{args} 2> /dev/null`.chomp
-      $?.to_i == 0 ? ret : default_value
+      $CHILD_STATUS.to_i == 0 ? ret : default_value
     end
   end
 
@@ -96,8 +107,8 @@ class JohnnyFive
     # Array<String> branches that will build (all others will be ignored)
     attr_accessor :branches
 
-    def_delegators :@travis, :pr, :pr?, :branch, :component, :files, :verbose, :list, :component_name
-    def_delegators :@travis, :pr=, :branch=, :suffix=, :range=, :verbose=, :component_name=
+    def_delegators :@travis, :pr?, :branch, :component, :files, :verbose, :list
+    def_delegators :@travis, :verbose=
 
     def deduce
       if pr?
@@ -121,7 +132,7 @@ class JohnnyFive
       regexp = Regexp.union(regexps)
       list("DETECT #{target}") { targets }
       list("REGEX:") { regexps } if verbose
-      
+
       files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" if verbose && fn }
     end
 
@@ -143,12 +154,12 @@ class JohnnyFive
 
       targets = [targets] unless targets.kind_of?(Array)
       targets.each do |target|
-        (shallow_rules[target]||=[]) << regex(glob, options) # TODO: support options[:except]
+        (shallow_rules[target] ||= []) << regex(glob, options) # TODO: support options[:except]
       end
       self
     end
 
-    alias test file
+    alias_method :test, :file
 
     def trigger(src_target, targets = nil)
       src_target, targets = @suite, src_target if targets.nil?
@@ -191,8 +202,11 @@ class JohnnyFive
     end
   end
 
-  # name of file to touch if there is a match
+  # @return <String|Nil> name of file to touch if no files have changed
   attr_accessor :touch
+  # @return <Number|Nil> value of exit status if no files have changed
+  attr_accessor :exit_value
+  attr_accessor :check
   attr_reader :travis
   attr_accessor :sherlock
 
@@ -202,22 +216,31 @@ class JohnnyFive
   end
 
   def parse(argv, env)
-    self.touch = "#{env["TRAVIS_BUILD_DIR"]}/.skip-ci"
-    sherlock.pr     = env['TRAVIS_PULL_REQUEST']
-    sherlock.branch = env['TRAVIS_BRANCH']
-    sherlock.range = env['TRAVIS_COMMIT_RANGE'] || ""
-
-
-    component = travis.component_name.inject(nil) { |memo, name| memo || env[name] } || ""
-    travis.component = "#{component}#{travis.suffix}" if component
-    #travis.verbose = ""
+    options = OptionParser.new do |opts|
+      opts.program_name = "audio_book_creator"
+      opts.version = VERSION
+      opts.banner = "Usage: johnny_five.rb [options] [title] url [url] [...]"
+      opt(opts, travis) do |o|
+        o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
+        o.opt(:component, "-c STRING", "--component STRING", "name of component being built e.g.: controllers-spec")
+        o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
+        o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
+        o.opt(:branch, "TRAVIS_BRANCH", "--branch STRING", "Branch being built")
+      end
+      opt(opts, self) do |o|
+        o.opt(:touch, "--touch STRING", "file to touch if the build has not changed")
+        o.opt(:exit_value, "--exit NUMBER", "exit value if build has not changed")
+        o.opt(:check, "--check", "validate that all changed files have a corresponding rule")
+      end
+    end
+    options.parse!(argv)
 
     self
   end
 
   def run
     travis.inform
-    travis.list("UNCOVERED", false) { sherlock.not_covered } if travis.verbose
+    travis.list("UNCOVERED", false) { sherlock.not_covered } if check
     run_it, reason = sherlock.deduce
     skip!(reason) unless run_it
   end
@@ -226,6 +249,7 @@ class JohnnyFive
   def skip!(reason)
     $stderr.puts "==> #{reason} <=="
     File.write(touch, reason) if touch
+    exit(self.exit_value.to_i) if exit_value
   end
 
   def self.instance
@@ -246,11 +270,7 @@ if __FILE__ == $PROGRAM_NAME
   $stderr.sync = true
 
   JohnnyFive.config do |cfg|
-    cfg.verbose = true
-    # only build PRs for the correct component
-    # use one of these env vars (and suffix) to determine name
-    cfg.component_name += %w(TEST_SUITE GEM)
-    cfg.suffix = "-spec"
+    # cfg.verbose = false
     # only build master branch (and PRs)
     cfg.branches << "master"
     cfg.file "Gemfile",                        %w(controllers models), :exact => true
