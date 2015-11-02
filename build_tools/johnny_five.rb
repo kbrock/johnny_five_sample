@@ -139,14 +139,17 @@ class JohnnyFive
       src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by #{fn}" if fn }
     end
 
-    def sanity_check
+    def sanity_check(files = all_files)
       all_rules = Regexp.union(shallow_rules.values.flatten)
-      list("UNCOVERED:", false) do
-        Dir['**/*'].select { |fn| File.file?(fn) }.select { |fn| !all_rules.match(fn) }
-      end
+      list("UNCOVERED:", false) { files.select { |fn| !all_rules.match(fn) } }
     end
 
     # private
+
+    # @return [Array<String>] all files in the current directory 
+    def all_files
+      Dir['**/*'].select { |fn| File.file?(fn) } + Dir['.[a-z]*']
+    end
 
     # @param targets [Array<String>] list of targets. (please expand with `dependencies` first)
     # @return [Array<Regexp>] rules for all these targets
