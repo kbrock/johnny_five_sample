@@ -27,22 +27,16 @@
     cfg.file "vendor",                         "ui", :ext => ""
 
     # the tests have changed, run the corresponding tests (but not necessarily the dendencies)
-    cfg.test "test/{controllers,views}",       "controllers-spec", :ext => "_test.rb"
-    cfg.test "test/fixtures",                  "models", :ext => ""
-    cfg.test "test/helpers",                   "controllers-spec", :ext => "_test.rb"
-    cfg.test "test/integration",               "ui-spec", :ext => "_test.rb"
-    cfg.test "test/models",                    "models-spec", :ext => "_test.rb"
-    cfg.file "gems/one/test",                  "one-spec", :ext => ""
+    cfg.test "test/{controllers,views}",       "controllers", :ext => "_test.rb"
+    cfg.file "test/fixtures",                  "models", :ext => ""
+    cfg.test "test/helpers",                   "controllers", :ext => "_test.rb"
+    cfg.test "test/integration",               "ui", :ext => "_test.rb"
+    cfg.test "test/models",                    "models", :ext => "_test.rb"
+    cfg.test "gems/one/test",                  "one", :ext => ""
     cfg.test "test/test_helper.rb",            %w(models controllers)
 
     # if the code changes, then run the dependendencies as well.
     cfg.trigger "controllers",                 "ui"
     cfg.trigger "models",                      "controllers"
     cfg.trigger "one",                         %w(controllers models)
-
-    # if the code changes, then run the corresponding specs
-    cfg.trigger "controllers",                 "controllers-spec"
-    cfg.trigger "models",                      "models-spec"
-    cfg.trigger "one",                         "one-spec"
-    cfg.trigger "ui",                          "ui-spec"
   end
