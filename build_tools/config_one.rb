@@ -5,26 +5,35 @@
 
     # if the Gemfile (exact name) changes, then the controllers and models (and dependencies) need to run
     cfg.file "Gemfile",                        %w(controllers models), :exact => true
-    # if any ruby files in these 3 directories (and descendents) change, then controllers need to run
-    cfg.file "app/{assets,controllers,views}", "controllers", :ext => ".rb"
+    cfg.file "README.md",                      :none, :exact => true
+    cfg.file "Rakefile",                       :none, :exact => true
+    cfg.file "app/assets",                     "ui", :ext => ""
+    # if any ruby files in these directories/descendents change, then trigger the controller specs/dependencies
+    cfg.file "app/{controllers,views}",        "controllers", :ext => ".rb"
+    cfg.file "app/{views}",                    "controllers", :ext => ".jbuilder"
     cfg.file "app/models",                     "models", :ext => ".rb"
     cfg.file "app/helpers",                    "controllers", :ext => ".rb"
     # ignore anything in bin directory. explicitly state, we know about this file, just ignore it
     cfg.file "bin",                            :none, :ext => ""
     cfg.file "build_tools",                    :none, :ext => ""
+    cfg.file "config",                         %w(controllers models ui), :ext => ""
+    cfg.file "db",                             "models", :ext => ".rb"
     # TODO: except not currently supported
     cfg.file "gems/one",                       "one", :except => %r{gems/one/test}, :ext => ""
     cfg.file "public",                         "ui", :ext => ""
+    cfg.file "tmp",                            :none, :ext => ""
+    cfg.file "log",                            :none, :ext => ""
+    cfg.file "lib/tasks",                      :none, :ext => ""
     cfg.file "vendor",                         "ui", :ext => ""
 
     # the tests have changed, run the corresponding tests (but not necessarily the dendencies)
-    cfg.test "test/{controllers,views}",       "controllers-spec", :ext => "_spec.rb"
+    cfg.test "test/{controllers,views}",       "controllers-spec", :ext => "_test.rb"
     cfg.test "test/fixtures",                  "models", :ext => ""
-    cfg.test "test/helpers",                   "controllers-spec", :ext => "_spec.rb"
-    cfg.test "test/integration",               "ui-spec", :ext => "_spec.rb"
-    cfg.test "test/models",                    "models-spec", :ext => "_spec.rb"
+    cfg.test "test/helpers",                   "controllers-spec", :ext => "_test.rb"
+    cfg.test "test/integration",               "ui-spec", :ext => "_test.rb"
+    cfg.test "test/models",                    "models-spec", :ext => "_test.rb"
     cfg.file "gems/one/test",                  "one-spec", :ext => ""
-    cfg.test "test/test_helper.rb",            :all
+    cfg.test "test/test_helper.rb",            %w(models controllers)
 
     # if the code changes, then run the dependendencies as well.
     cfg.trigger "controllers",                 "ui"
