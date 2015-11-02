@@ -28,16 +28,18 @@ class JohnnyFive
 
   # Travis environment and git configuration
   class Travis
-    # @return [String] pull request number (e.g.: "555" or "false" for a branch)
-    attr_accessor :pr
     # @return [String] branch being built (e.g.: master)
     attr_accessor :branch
-    # @return [String] component being built
-    attr_accessor :component
-    # @return [Boolean] true to show verbose messages
-    attr_accessor :verbose
+    # @return [Boolean] true if the changed files should be validated against rules
+    attr_accessor :check
     # @return [String] the commits that have changed for this build (e.g.: first_commit...last_commit)
     attr_accessor :commit_range
+    # @return [String] component being built
+    attr_accessor :component
+    # @return [String] pull request number (e.g.: "555" or "false" for a branch)
+    attr_accessor :pr
+    # @return [Boolean] true to show verbose messages
+    attr_accessor :verbose
 
     def pr?
       @pr != "false"
@@ -73,10 +75,9 @@ class JohnnyFive
     end
 
     def inform
-      return self unless verbose
       puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
-      puts "COMMIT_RANGE : #{range}#{" (derived from '#{commit_range}')" if range != commit_range}"
       puts "COMPONENT    : #{component}"
+      puts "COMMIT_RANGE : #{range}#{" (derived from '#{commit_range}')" if range != commit_range}"
       list("COMMITS") { commits }
       list("FILES") { files } if verbose
       self
@@ -108,7 +109,7 @@ class JohnnyFive
     # @return [Array<String>|Nil] For a non-PR, branches that will trigger a build (all others will be ignored)
     attr_accessor :branches
 
-    def_delegators :@travis, :pr?, :branch, :component, :files, :verbose, :list
+    def_delegators :@travis, :branch, :check, :component, :files, :list, :pr?, :verbose
 
     # main logic to determine what to do
     def deduce
@@ -132,16 +133,16 @@ class JohnnyFive
       targets = dependencies([target, :all])
       regexps = rules(targets)
       regexp = Regexp.union(regexps)
-      list("DETECT #{target}") { targets }
-      list("REGEX:") { regexps } if verbose
+      list("DETECT #{target}") { targets } if verbose || check
+      list("REGEX:") { regexps } if check
 
-      src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by #{fn}" if verbose && fn }
+      src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by #{fn}" if fn }
     end
 
     # @return Array[String] files that are not covered by any rules (used by --check)
     def not_covered(src_files = files)
-      all_files = Regexp.union(shallow_rules.values.flatten)
-      src_files.select { |fn| !all_files.match(fn) }
+      all_rules = Regexp.union(shallow_rules.values.flatten)
+      src_files.select { |fn| !all_rules.match(fn) }
     end
 
     # private
@@ -179,8 +180,8 @@ class JohnnyFive
 
     attr_reader :sherlock, :travis, :main
     def_delegators :@sherlock, :branches, :branches=, :shallow_rules, :shallow_dependencies
-    def_delegators :@travis, :branch=, :commit_range=, :component=, :verbose=
-    def_delegators :@main, :check=, :exit_value=, :touch=
+    def_delegators :@travis, :branch=, :check=, :commit_range=, :component=, :verbose=
+    def_delegators :@main, :exit_value=, :touch=
 
     def suite(name)
       @suite = name
@@ -223,8 +224,6 @@ class JohnnyFive
   attr_accessor :touch
   # @return [Number|Nil] value of exit status if no files have changed
   attr_accessor :exit_value
-  # @return [Boolean] true if the changed files should be validated against rules
-  attr_accessor :check
   attr_reader :travis, :sherlock
 
   def initialize
@@ -237,13 +236,13 @@ class JohnnyFive
       opts.version = VERSION
       opt(opts, travis, env) do |o|
         o.opt(:branch, "TRAVIS_BRANCH", "--branch STRING", "Branch being built")
+        o.opt(:check, "--check", "validate that there is a rule for all changed files")
         o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
         o.opt(:component, "--component STRING", "name of component being built")
         o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
         o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
       end
       opt(opts, self, env) do |o|
-        o.opt(:check, "--check", "validate that there is a rule for all changed files")
         o.opt(:exit_value, "--exit NUMBER", "if the build did not change, exit with this")
         o.opt(:touch, "--touch STRING", "if the build has not changed, touch this file")
       end
@@ -256,7 +255,7 @@ class JohnnyFive
 
   def run
     travis.inform
-    travis.list("UNCOVERED", false) { sherlock.not_covered } if check
+    travis.list("UNCOVERED", false) { sherlock.not_covered } if travis.check
     run_it, reason = sherlock.deduce
     skip!(reason) unless run_it
   end
