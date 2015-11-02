@@ -6,43 +6,46 @@ require 'optionparser'
 class JohnnyFive
   VERSION = "0.0.3"
 
+  # Parser for the command line
   class OptSetter
-    def initialize(opts, model)
+    def initialize(opts, model, env)
       @opts  = opts
       @model = model
+      @env = env
     end
 
     def opt(value, *args)
-      unless args[0].start_with?("-") # support environment variable being specified
+      # support environment variable being specified
+      unless args[0].start_with?("-")
         env = args.shift
-        ev = ENV[env]
+        ev = @env[env]
         @model.send("#{value}=", ev) if ev
-        args.last << " (currently #{env} is #{ev || "not set"})"
+        args.last << " (#{env}=#{ev || "<not set>"})"
       end
       @opts.on(*args) { |v| @model.send("#{value}=", v) }
     end
   end
 
-  def opt(opts, model)
-    yield OptSetter.new(opts, model)
-  end
-
+  # Travis environment and git configuration
   class Travis
-    # @return <String> pull request number (e.g.: "555" or "false" for a branch)
-    attr_accessor :pr
-    # @return <String> branch being built (e.g.: master)
+    # @return [String] branch being built (e.g.: master)
     attr_accessor :branch
-    # @return <String> component being built
-    attr_accessor :component
-    # @return <Boolean> true to show verbose messages
-    attr_accessor :verbose
+    # @return [Boolean] true if the changed files should be validated against rules
+    attr_accessor :check
+    # @return [String] the commits that have changed for this build (e.g.: first_commit...last_commit)
     attr_accessor :commit_range
+    # @return [String] component being built
+    attr_accessor :component
+    # @return [String] pull request number (e.g.: "555" or "false" for a branch)
+    attr_accessor :pr
+    # @return [Boolean] true to show verbose messages
+    attr_accessor :verbose
 
     def pr?
       @pr != "false"
     end
 
-    # @return <String> commit range (e.g.: begin...end commit)
+    # @return [String] commit range (e.g.: begin...end commit)
     def range
       if commit_range == "" || commit_range.nil?
         "FETCH_HEAD^...FETCH_HEAD" # HEAD
@@ -72,10 +75,9 @@ class JohnnyFive
     end
 
     def inform
-      return self unless verbose
       puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
-      puts "COMMIT_RANGE : #{range}#{" (derived from '#{commit_range}')" if range != commit_range}"
       puts "COMPONENT    : #{component}"
+      puts "COMMIT_RANGE : #{range}#{" (derived from '#{commit_range}')" if range != commit_range}"
       list("COMMITS") { commits }
       list("FILES") { files } if verbose
       self
@@ -89,6 +91,7 @@ class JohnnyFive
     end
   end
 
+  # uses facts to deduce a plan
   class Sherlock
     extend Forwardable
 
@@ -99,16 +102,16 @@ class JohnnyFive
       @branches = []
     end
 
-    # Hash<String,Array<Regexp>> target and files that will trigger it
+    # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build
     attr_accessor :shallow_rules
-    # Hash<String,Array<String>> target and targets that will trigger it
+    # @return [Hash<String,Array<String>] target and targets that will trigger a build
     attr_accessor :shallow_dependencies
-    # Array<String> branches that will build (all others will be ignored)
+    # @return [Array<String>|Nil] For a non-PR, branches that will trigger a build (all others will be ignored)
     attr_accessor :branches
 
-    def_delegators :@travis, :pr?, :branch, :component, :files, :verbose, :list
-    def_delegators :@travis
+    def_delegators :@travis, :branch, :check, :component, :files, :list, :pr?, :verbose
 
+    # main logic to determine what to do
     def deduce
       if pr?
         if component.empty? || triggered?(component)
@@ -125,23 +128,60 @@ class JohnnyFive
       end
     end
 
-    def triggered?(target)
+    # @return [Boolean] true if the changed files trigger this target
+    def triggered?(target, src_files = files)
       targets = dependencies([target, :all])
       regexps = rules(targets)
       regexp = Regexp.union(regexps)
-      list("DETECT #{target}") { targets }
-      list("REGEX:") { regexps } if verbose
+      list("DETECT #{target}") { targets } if verbose || check
+      list("REGEX:") { regexps } if check
 
-      files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" if verbose && fn }
+      src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by #{fn}" if fn }
     end
 
     # @return Array[String] files that are not covered by any rules (used by --check)
-    def not_covered
-      all_files = Regexp.union(shallow_rules.values.flatten)
-      files.select { |fn| !all_files.match(fn) }
+    def not_covered(src_files = files)
+      all_rules = Regexp.union(shallow_rules.values.flatten)
+      src_files.select { |fn| !all_rules.match(fn) }
     end
 
-    # configuration dsl
+    # private
+
+    # @param targets [Array<String>] list of targets. (please expand with `dependencies` first)
+    # @return [Array<Regexp>] rules for all these targets
+    def rules(targets)
+      targets.flat_map { |target| shallow_rules[target] }.uniq.compact
+    end
+
+    # @param targets [Array<String>]
+    # @return targets [Array<String>] list of all targets and dependent targets
+    def dependencies(targets)
+      count = 0
+      # keep doing this until we stop adding some
+      while count != targets.size
+        count = targets.size
+        targets += targets.flat_map { |target| shallow_dependencies[target] }
+        targets.compact!
+        targets.uniq!
+      end
+      targets.flatten! || targets
+    end
+  end
+
+  # Configuration file Translator
+  class DslTranslator
+    extend Forwardable
+
+    def initialize(main, sherlock, travis)
+      @main = main
+      @sherlock = sherlock
+      @travis = travis
+    end
+
+    attr_reader :sherlock, :travis, :main
+    def_delegators :@sherlock, :branches, :branches=, :shallow_rules, :shallow_dependencies
+    def_delegators :@travis, :branch=, :check=, :commit_range=, :component=, :verbose=
+    def_delegators :@main, :exit_value=, :touch=
 
     def suite(name)
       @suite = name
@@ -153,7 +193,7 @@ class JohnnyFive
 
       targets = [targets] unless targets.kind_of?(Array)
       targets.each do |target|
-        (shallow_rules[target] ||= []) << regex(glob, options) # TODO: support options[:except]
+        (shallow_rules[target] ||= []) << regex(glob, options)
       end
       self
     end
@@ -164,50 +204,27 @@ class JohnnyFive
       src_target, targets = @suite, src_target if targets.nil?
       targets = [targets] unless targets.kind_of?(Array)
       targets.each do |target|
-        (shallow_dependencies[target]||=[]) << src_target
+        (shallow_dependencies[target] ||= []) << src_target
       end
       self
     end
 
-    # private
-
-    def trigger_regex(*targets)
-      Regexp.union(rules(targets))
-    end
-
-    def rules(targets)
-      targets.flat_map { |target| shallow_rules[target] }.uniq.compact
-    end
-
-    def dependencies(targets)
-      count = 0
-      # keep doing this until we stop adding some
-      while(count != targets.size)
-        count = targets.size
-        targets += targets.flat_map { |target| shallow_dependencies[target] }
-        targets.compact!
-        targets.uniq!
-      end
-      targets.flatten! || targets
-    end
-
     private
 
+    # TODO: find a way to support options except
     def regex(glob, options)
       # in the glob world, tack on '**/*#{options[:ext]}'
       ext = ".*#{options[:ext]}" if options[:ext]
       # would be nice to replace '{' with '(?' to not capture
-      /#{glob.tr("{,}","(|)")}#{ext}/
+      /#{glob.tr("{,}", "(|)")}#{ext}/
     end
   end
 
-  # @return <String|Nil> name of file to touch if no files have changed
+  # @return [String|Nil] name of file to touch if no files have changed
   attr_accessor :touch
-  # @return <Number|Nil> value of exit status if no files have changed
+  # @return [Number|Nil] value of exit status if no files have changed
   attr_accessor :exit_value
-  attr_accessor :check
-  attr_reader :travis
-  attr_accessor :sherlock
+  attr_reader :travis, :sherlock
 
   def initialize
     @travis = Travis.new
@@ -216,21 +233,20 @@ class JohnnyFive
 
   def parse(argv, env)
     options = OptionParser.new do |opts|
-      opts.program_name = "audio_book_creator"
       opts.version = VERSION
-      opts.banner = "Usage: johnny_five.rb [options] [title] url [url] [...]"
-      opt(opts, travis) do |o|
-        o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
-        o.opt(:component, "-c STRING", "--component STRING", "name of component being built e.g.: controllers-spec")
-        o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
-        o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
+      opt(opts, travis, env) do |o|
         o.opt(:branch, "TRAVIS_BRANCH", "--branch STRING", "Branch being built")
+        o.opt(:check, "--check", "validate that there is a rule for all changed files")
+        o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
+        o.opt(:component, "--component STRING", "name of component being built")
+        o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
+        o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
       end
-      opt(opts, self) do |o|
-        o.opt(:touch, "--touch STRING", "file to touch if the build has not changed")
-        o.opt(:exit_value, "--exit NUMBER", "exit value if build has not changed")
-        o.opt(:check, "--check", "validate that all changed files have a corresponding rule")
+      opt(opts, self, env) do |o|
+        o.opt(:exit_value, "--exit NUMBER", "if the build did not change, exit with this")
+        o.opt(:touch, "--touch STRING", "if the build has not changed, touch this file")
       end
+      opts.on("--config STRING", "Use configuration file") { |file_name| require File.expand_path(file_name, Dir.pwd) }
     end
     options.parse!(argv)
 
@@ -239,7 +255,7 @@ class JohnnyFive
 
   def run
     travis.inform
-    travis.list("UNCOVERED", false) { sherlock.not_covered } if check
+    travis.list("UNCOVERED", false) { sherlock.not_covered } if travis.check
     run_it, reason = sherlock.deduce
     skip!(reason) unless run_it
   end
@@ -248,15 +264,23 @@ class JohnnyFive
   def skip!(reason)
     $stderr.puts "==> #{reason} <=="
     File.write(touch, reason) if touch
-    exit(self.exit_value.to_i) if exit_value
+    exit(exit_value.to_i) if exit_value
+  end
+
+  def opt(opts, model, env)
+    yield OptSetter.new(opts, model, env)
+  end
+
+  def translator
+    DslTranslator.new(self, sherlock, travis)
+  end
+
+  def self.config
+    yield instance.translator
   end
 
   def self.instance
     @instance ||= new
-  end
-
-  def self.config
-    yield instance.sherlock
   end
 
   def self.run(argv, env)
@@ -267,46 +291,6 @@ end
 if __FILE__ == $PROGRAM_NAME
   $stdout.sync = true
   $stderr.sync = true
-
-  JohnnyFive.config do |cfg|
-    # if this is a branch (not a PR) - then only run for master
-    # comment out if you want to run for all branches
-    cfg.branches << "master"
-
-    # if the Gemfile (exact name) changes, then the controllers and models (and dependencies) need to run
-    cfg.file "Gemfile",                        %w(controllers models), :exact => true
-    # if any ruby files in these 3 directories (and descendents) change, then controllers need to run
-    cfg.file "app/{assets,controllers,views}", "controllers", :ext => ".rb"
-    cfg.file "app/models",                     "models", :ext => ".rb"
-    cfg.file "app/helpers",                    "controllers", :ext => ".rb"
-    # ignore anything in bin directory. explicitly state, we know about this file, just ignore it
-    cfg.file "bin",                            :none, :ext => ""
-    cfg.file "build_tools",                    :none, :ext => ""
-    # TODO: except not currently supported
-    cfg.file "gems/one",                       "one", :except => %r{gems/one/test}, :ext => ""
-    cfg.file "public",                         "ui", :ext => ""
-    cfg.file "vendor",                         "ui", :ext => ""
-
-    # the tests have changed, run the corresponding tests (but not necessarily the dendencies)
-    cfg.test "test/{controllers,views}",       "controllers-spec", :ext => "_spec.rb"
-    cfg.test "test/fixtures",                  "models", :ext => ""
-    cfg.test "test/helpers",                   "controllers-spec", :ext => "_spec.rb"
-    cfg.test "test/integration",               "ui-spec", :ext => "_spec.rb"
-    cfg.test "test/models",                    "models-spec", :ext => "_spec.rb"
-    cfg.file "gems/one/test",                  "one-spec", :ext => ""
-    cfg.test "test/test_helper.rb",            :all
-
-    # if the code changes, then run the dependendencies as well.
-    cfg.trigger "controllers",                 "ui"
-    cfg.trigger "models",                      "controllers"
-    cfg.trigger "one",                         %w(controllers models)
-
-    # if the code changes, then run the corresponding specs
-    cfg.trigger "controllers",                 "controllers-spec"
-    cfg.trigger "models",                      "models-spec"
-    cfg.trigger "one",                         "one-spec"
-    cfg.trigger "ui",                          "ui-spec"
-  end
 
   JohnnyFive.run(ARGV, ENV)
 end
