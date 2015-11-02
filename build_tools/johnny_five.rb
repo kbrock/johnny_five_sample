@@ -114,13 +114,13 @@ class JohnnyFive
     # main logic to determine what to do
     def deduce
       if pr?
-        if component.empty? || triggered?(component)
+        if component.nil? || component.empty? || triggered?(component)
           [true, "building PR for #{component || "none specified"}"]
         else
           [false, "skipping PR for unchanged: #{component}"]
         end
       else
-        if branch.empty? || branches.empty? || branches.include?(branch)
+        if branch.nil? || branch.empty? || branches.empty? || branches.include?(branch)
           [true, "building branch: #{branch || "none specified"}"]
         else
           [false, "skipping branch: #{branch} (not #{branches.join(", ")})"]
