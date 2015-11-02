@@ -12,13 +12,14 @@ env:
   - TEST_SUITE=controllers
   - TEST_SUITE=models
   - TEST_SUITE=ui
+  - TEST_SUITE=j5
   - GEM=one
 matrix:
   fast_finish: true
 #addons:
 #  postgresql: '9.4'
 before_install:
-- ruby ${TRAVIS_BUILD_DIR}/build_tools/johnny_five.rb
+- 'ruby ${TRAVIS_BUILD_DIR}/build_tools/johnny_five.rb -component ${TEST_SUITE:-$GEM}-spec --touch $TRAVIS_BUILD_DIR/.skip-ci --verbose'
 - source ${TRAVIS_BUILD_DIR}/build_tools/before_install.sh
 before_script:
 - source ${TRAVIS_BUILD_DIR}/build_tools/before_script.sh
