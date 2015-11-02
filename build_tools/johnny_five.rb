@@ -26,10 +26,6 @@ class JohnnyFive
     end
   end
 
-  def opt(opts, model, env)
-    yield OptSetter.new(opts, model, env)
-  end
-
   # Travis environment and git configuration
   class Travis
     # @return [String] pull request number (e.g.: "555" or "false" for a branch)
@@ -139,7 +135,7 @@ class JohnnyFive
       list("DETECT #{target}") { targets }
       list("REGEX:") { regexps } if verbose
 
-      src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" if verbose && fn }
+      src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by #{fn}" if verbose && fn }
     end
 
     # @return Array[String] files that are not covered by any rules (used by --check)
@@ -148,7 +144,43 @@ class JohnnyFive
       src_files.select { |fn| !all_files.match(fn) }
     end
 
-    # configuration dsl
+    # private
+
+    # @param targets [Array<String>] list of targets. (please expand with `dependencies` first)
+    # @return [Array<Regexp>] rules for all these targets
+    def rules(targets)
+      targets.flat_map { |target| shallow_rules[target] }.uniq.compact
+    end
+
+    # @param targets [Array<String>]
+    # @return targets [Array<String>] list of all targets and dependent targets
+    def dependencies(targets)
+      count = 0
+      # keep doing this until we stop adding some
+      while count != targets.size
+        count = targets.size
+        targets += targets.flat_map { |target| shallow_dependencies[target] }
+        targets.compact!
+        targets.uniq!
+      end
+      targets.flatten! || targets
+    end
+  end
+
+  # Configuration file Translator
+  class DslTranslator
+    extend Forwardable
+
+    def initialize(main, sherlock, travis)
+      @main = main
+      @sherlock = sherlock
+      @travis = travis
+    end
+
+    attr_reader :sherlock, :travis, :main
+    def_delegators :@sherlock, :branches, :branches=, :shallow_rules, :shallow_dependencies
+    def_delegators :@travis, :branch=, :commit_range=, :component=, :verbose=
+    def_delegators :@main, :check=, :exit_value=, :touch=
 
     def suite(name)
       @suite = name
@@ -176,28 +208,6 @@ class JohnnyFive
       self
     end
 
-    # private
-
-    def trigger_regex(*targets)
-      Regexp.union(rules(targets))
-    end
-
-    def rules(targets)
-      targets.flat_map { |target| shallow_rules[target] }.uniq.compact
-    end
-
-    def dependencies(targets)
-      count = 0
-      # keep doing this until we stop adding some
-      while(count != targets.size)
-        count = targets.size
-        targets += targets.flat_map { |target| shallow_dependencies[target] }
-        targets.compact!
-        targets.uniq!
-      end
-      targets.flatten! || targets
-    end
-
     private
 
     # TODO: find a way to support options except
@@ -205,7 +215,7 @@ class JohnnyFive
       # in the glob world, tack on '**/*#{options[:ext]}'
       ext = ".*#{options[:ext]}" if options[:ext]
       # would be nice to replace '{' with '(?' to not capture
-      /#{glob.tr("{,}","(|)")}#{ext}/
+      /#{glob.tr("{,}", "(|)")}#{ext}/
     end
   end
 
@@ -255,15 +265,23 @@ class JohnnyFive
   def skip!(reason)
     $stderr.puts "==> #{reason} <=="
     File.write(touch, reason) if touch
-    exit(self.exit_value.to_i) if exit_value
+    exit(exit_value.to_i) if exit_value
+  end
+
+  def opt(opts, model, env)
+    yield OptSetter.new(opts, model, env)
+  end
+
+  def translator
+    DslTranslator.new(self, sherlock, travis)
+  end
+
+  def self.config
+    yield instance.translator
   end
 
   def self.instance
     @instance ||= new
-  end
-
-  def self.config
-    yield instance.sherlock
   end
 
   def self.run(argv, env)
