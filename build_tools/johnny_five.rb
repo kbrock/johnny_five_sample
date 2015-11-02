@@ -21,22 +21,12 @@ class JohnnyFive
       @component_name = []
     end
 
-    def parse(_argv, env)
-      @pr     = env['TRAVIS_PULL_REQUEST']
-      @branch = env['TRAVIS_BRANCH']
-      @commit_range = env['TRAVIS_COMMIT_RANGE'] || ""
-      @component = component_name.inject(nil) { |memo, name| memo || env[name] } || ""
-      @component = "#{@component}#{suffix}" if @component
-
-      self
-    end
-
     def pr?
       @pr != "false"
     end
 
     def range=(value)
-      @commit_range = val
+      @commit_range = value
     end
 
     # @return <String> commit range (e.g.: begin...end commit)
@@ -212,8 +202,16 @@ class JohnnyFive
   end
 
   def parse(argv, env)
-    @touch = "#{env["TRAVIS_BUILD_DIR"]}/.skip-ci"
-    travis.parse(argv, env)
+    self.touch = "#{env["TRAVIS_BUILD_DIR"]}/.skip-ci"
+    sherlock.pr     = env['TRAVIS_PULL_REQUEST']
+    sherlock.branch = env['TRAVIS_BRANCH']
+    sherlock.range = env['TRAVIS_COMMIT_RANGE'] || ""
+
+
+    component = travis.component_name.inject(nil) { |memo, name| memo || env[name] } || ""
+    travis.component = "#{component}#{travis.suffix}" if component
+    #travis.verbose = ""
+
     self
   end
 
