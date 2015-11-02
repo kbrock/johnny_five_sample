@@ -15,13 +15,8 @@ JohnnyFive.config do |matrix|
   matrix.suite "models" do |cfg|
     cfg.file "app/models", :ext => ".rb"
     cfg.file "db", :ext => ".rb"
-    cfg.test "test/fixtures", :ext => ""
-  end
-
-  # models-spec: test/models/**/*_test.rb, models
-  matrix.suite "models-spec" do |cfg|
+    cfg.file "test/fixtures", :ext => ""
     cfg.test "test/models", :ext => "_test.rb"
-    cfg.trigger "models"
   end
 
   matrix.suite "controllers" do |cfg|
@@ -29,12 +24,8 @@ JohnnyFive.config do |matrix|
     cfg.file "app/views", :ext => ".jbuilder"
     cfg.file "app/helpers", :ext => ".rb"
     cfg.trigger "models"
-  end
-
-  matrix.suite "controllers-spec" do |cfg|
     cfg.test "test/{controllers,views}", :ext => "_test.rb"
     cfg.test "test/helpers", :ext => "_test.rb"
-    cfg.trigger "controllers"
   end
 
   matrix.suite "ui" do |cfg|
@@ -43,20 +34,12 @@ JohnnyFive.config do |matrix|
     cfg.file "public", :ext => ""
     cfg.file "vendor", :ext => ""
     cfg.trigger "controller"
-  end
-
-  matrix.suite "ui-spec" do |cfg|
     cfg.test "test/integration", :ext => "_test.rb"
-    cfg.trigger "ui"
   end
 
   matrix.suite "one" do |cfg|
     cfg.file "gems/one", :except => %r{gems/one/test}, :ext => ""
-  end
-
-  matrix.suite "one-spec" do |cfg|
-    cfg.file "gems/one/test", :ext => ""
-    cfg.trigger "one"
+    cfg.test "gems/one/test", :ext => ""
   end
 
   matrix.suite :none do |cfg|

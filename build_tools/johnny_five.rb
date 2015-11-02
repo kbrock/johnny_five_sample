@@ -98,10 +98,13 @@ class JohnnyFive
     def initialize(travis)
       @travis = travis
       @shallow_rules = {}
+      @non_dependent_rules = {}
       @shallow_dependencies = {}
       @branches = []
     end
 
+    # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build (but not dependent rules)
+    attr_accessor :non_dependent_rules
     # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build
     attr_accessor :shallow_rules
     # @return [Hash<String,Array<String>] target and targets that will trigger a build
@@ -140,7 +143,7 @@ class JohnnyFive
     end
 
     def sanity_check(files = all_files)
-      all_rules = Regexp.union(shallow_rules.values.flatten)
+      all_rules = Regexp.union((shallow_rules.values.flatten + non_dependent_rules.values.flatten).uniq)
       list("UNCOVERED:", false) { files.select { |fn| !all_rules.match(fn) } }
     end
 
@@ -160,6 +163,7 @@ class JohnnyFive
     # @param targets [Array<String>]
     # @return targets [Array<String>] list of all targets and dependent targets
     def dependencies(targets)
+      main_target = targets.detect { |target| target != :all }
       count = 0
       # keep doing this until we stop adding some
       while count != targets.size
@@ -168,6 +172,8 @@ class JohnnyFive
         targets.compact!
         targets.uniq!
       end
+      # all the rules that target only this build
+      targets += (non_dependent_rules[main_target] || [])
       targets.flatten! || targets
     end
   end
@@ -183,7 +189,7 @@ class JohnnyFive
     end
 
     attr_reader :sherlock, :travis, :main
-    def_delegators :@sherlock, :branches, :branches=, :shallow_rules, :shallow_dependencies
+    def_delegators :@sherlock, :branches, :branches=, :non_dependent_rules, :shallow_rules, :shallow_dependencies
     def_delegators :@travis, :branch=, :check=, :commit_range=, :component=, :verbose=
     def_delegators :@main, :exit_value=, :touch=
 
@@ -192,17 +198,19 @@ class JohnnyFive
       yield self
     end
 
-    def file(glob, targets = nil, options = {})
+    def file(glob, targets = nil, options = {}, rules = shallow_rules)
       targets, options = @suite, targets if targets.kind_of?(Hash)
 
       targets = [targets] unless targets.kind_of?(Array)
       targets.each do |target|
-        (shallow_rules[target] ||= []) << regex(glob, options)
+        (rules[target] ||= []) << regex(glob, options)
       end
       self
     end
 
-    alias_method :test, :file
+    def test(glob, targets = nil, options = {})
+      file(glob, targets, options, non_dependent_rules)
+    end
 
     def trigger(src_target, targets = nil)
       src_target, targets = @suite, src_target if targets.nil?
