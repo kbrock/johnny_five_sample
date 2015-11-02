@@ -6,6 +6,7 @@ require 'optionparser'
 class JohnnyFive
   VERSION = "0.0.3"
 
+  # Parser for the command line
   class OptSetter
     def initialize(opts, model, env)
       @opts  = opts
@@ -14,7 +15,8 @@ class JohnnyFive
     end
 
     def opt(value, *args)
-      unless args[0].start_with?("-") # support environment variable being specified
+      # support environment variable being specified
+      unless args[0].start_with?("-")
         env = args.shift
         ev = @env[env]
         @model.send("#{value}=", ev) if ev
@@ -28,22 +30,24 @@ class JohnnyFive
     yield OptSetter.new(opts, model, env)
   end
 
+  # Travis environment and git configuration
   class Travis
-    # @return <String> pull request number (e.g.: "555" or "false" for a branch)
+    # @return [String] pull request number (e.g.: "555" or "false" for a branch)
     attr_accessor :pr
-    # @return <String> branch being built (e.g.: master)
+    # @return [String] branch being built (e.g.: master)
     attr_accessor :branch
-    # @return <String> component being built
+    # @return [String] component being built
     attr_accessor :component
-    # @return <Boolean> true to show verbose messages
+    # @return [Boolean] true to show verbose messages
     attr_accessor :verbose
+    # @return [String] the commits that have changed for this build (e.g.: first_commit...last_commit)
     attr_accessor :commit_range
 
     def pr?
       @pr != "false"
     end
 
-    # @return <String> commit range (e.g.: begin...end commit)
+    # @return [String] commit range (e.g.: begin...end commit)
     def range
       if commit_range == "" || commit_range.nil?
         "FETCH_HEAD^...FETCH_HEAD" # HEAD
@@ -90,6 +94,7 @@ class JohnnyFive
     end
   end
 
+  # uses facts to deduce a plan
   class Sherlock
     extend Forwardable
 
@@ -100,16 +105,16 @@ class JohnnyFive
       @branches = []
     end
 
-    # Hash<String,Array<Regexp>> target and files that will trigger it
+    # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build
     attr_accessor :shallow_rules
-    # Hash<String,Array<String>> target and targets that will trigger it
+    # @return [Hash<String,Array<String>] target and targets that will trigger a build
     attr_accessor :shallow_dependencies
-    # Array<String> branches that will build (all others will be ignored)
+    # @return [Array<String>|Nil] For a non-PR, branches that will trigger a build (all others will be ignored)
     attr_accessor :branches
 
     def_delegators :@travis, :pr?, :branch, :component, :files, :verbose, :list
-    def_delegators :@travis
 
+    # main logic to determine what to do
     def deduce
       if pr?
         if component.empty? || triggered?(component)
@@ -126,20 +131,21 @@ class JohnnyFive
       end
     end
 
-    def triggered?(target)
+    # @return [Boolean] true if the changed files trigger this target
+    def triggered?(target, src_files = files)
       targets = dependencies([target, :all])
       regexps = rules(targets)
       regexp = Regexp.union(regexps)
       list("DETECT #{target}") { targets }
       list("REGEX:") { regexps } if verbose
 
-      files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" if verbose && fn }
+      src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "triggered by #{fn}" if verbose && fn }
     end
 
     # @return Array[String] files that are not covered by any rules (used by --check)
-    def not_covered
+    def not_covered(src_files = files)
       all_files = Regexp.union(shallow_rules.values.flatten)
-      files.select { |fn| !all_files.match(fn) }
+      src_files.select { |fn| !all_files.match(fn) }
     end
 
     # configuration dsl
@@ -154,7 +160,7 @@ class JohnnyFive
 
       targets = [targets] unless targets.kind_of?(Array)
       targets.each do |target|
-        (shallow_rules[target] ||= []) << regex(glob, options) # TODO: support options[:except]
+        (shallow_rules[target] ||= []) << regex(glob, options)
       end
       self
     end
@@ -165,7 +171,7 @@ class JohnnyFive
       src_target, targets = @suite, src_target if targets.nil?
       targets = [targets] unless targets.kind_of?(Array)
       targets.each do |target|
-        (shallow_dependencies[target]||=[]) << src_target
+        (shallow_dependencies[target] ||= []) << src_target
       end
       self
     end
@@ -194,6 +200,7 @@ class JohnnyFive
 
     private
 
+    # TODO: find a way to support options except
     def regex(glob, options)
       # in the glob world, tack on '**/*#{options[:ext]}'
       ext = ".*#{options[:ext]}" if options[:ext]
@@ -202,13 +209,13 @@ class JohnnyFive
     end
   end
 
-  # @return <String|Nil> name of file to touch if no files have changed
+  # @return [String|Nil] name of file to touch if no files have changed
   attr_accessor :touch
-  # @return <Number|Nil> value of exit status if no files have changed
+  # @return [Number|Nil] value of exit status if no files have changed
   attr_accessor :exit_value
+  # @return [Boolean] true if the changed files should be validated against rules
   attr_accessor :check
-  attr_reader :travis
-  attr_accessor :sherlock
+  attr_reader :travis, :sherlock
 
   def initialize
     @travis = Travis.new
@@ -219,16 +226,16 @@ class JohnnyFive
     options = OptionParser.new do |opts|
       opts.version = VERSION
       opt(opts, travis, env) do |o|
-        o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
-        o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
-        o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
         o.opt(:branch, "TRAVIS_BRANCH", "--branch STRING", "Branch being built")
+        o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
         o.opt(:component, "--component STRING", "name of component being built")
+        o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
+        o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
       end
       opt(opts, self, env) do |o|
-        o.opt(:touch, "--touch STRING", "if the build has not changed, touch this file")
-        o.opt(:exit_value, "--exit NUMBER", "if the build did not change, exit with this")
         o.opt(:check, "--check", "validate that there is a rule for all changed files")
+        o.opt(:exit_value, "--exit NUMBER", "if the build did not change, exit with this")
+        o.opt(:touch, "--touch STRING", "if the build has not changed, touch this file")
       end
       opts.on("--config STRING", "Use configuration file") { |file_name| require File.expand_path(file_name, Dir.pwd) }
     end
