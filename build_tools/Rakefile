@@ -8,4 +8,4 @@ end
 
 task :default
 
-puts "rake task skipped"
+puts "build skipped"
