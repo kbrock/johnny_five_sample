@@ -7,15 +7,16 @@ class JohnnyFive
   VERSION = "0.0.3"
 
   class OptSetter
-    def initialize(opts, model)
+    def initialize(opts, model, env)
       @opts  = opts
       @model = model
+      @env = env
     end
 
     def opt(value, *args)
       unless args[0].start_with?("-") # support environment variable being specified
         env = args.shift
-        ev = ENV[env]
+        ev = @env[env]
         @model.send("#{value}=", ev) if ev
         args.last << " (#{env}=#{ev || "<not set>"})"
       end
@@ -23,8 +24,8 @@ class JohnnyFive
     end
   end
 
-  def opt(opts, model)
-    yield OptSetter.new(opts, model)
+  def opt(opts, model, env)
+    yield OptSetter.new(opts, model, env)
   end
 
   class Travis
@@ -217,14 +218,14 @@ class JohnnyFive
   def parse(argv, env)
     options = OptionParser.new do |opts|
       opts.version = VERSION
-      opt(opts, travis) do |o|
+      opt(opts, travis, env) do |o|
         o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
         o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
         o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
         o.opt(:branch, "TRAVIS_BRANCH", "--branch STRING", "Branch being built")
         o.opt(:component, "--component STRING", "name of component being built")
       end
-      opt(opts, self) do |o|
+      opt(opts, self, env) do |o|
         o.opt(:touch, "--touch STRING", "if the build has not changed, touch this file")
         o.opt(:exit_value, "--exit NUMBER", "if the build did not change, exit with this")
         o.opt(:check, "--check", "validate that there is a rule for all changed files")
