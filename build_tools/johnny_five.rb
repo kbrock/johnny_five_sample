@@ -26,24 +26,10 @@ class JohnnyFive
     end
   end
 
-  # Travis environment and git configuration
-  class Travis
-    # @return [String] branch being built (e.g.: master)
-    attr_accessor :branch
-    # @return [Boolean] true to check all files on the filesystem against rules
-    attr_accessor :check
+  class GitFileList
+    include Enumerable
     # @return [String] the commits that have changed for this build (e.g.: first_commit...last_commit)
     attr_accessor :commit_range
-    # @return [String] component being built
-    attr_accessor :component
-    # @return [String] pull request number (e.g.: "555" or "false" for a branch)
-    attr_accessor :pr
-    # @return [Boolean] true to show verbose messages
-    attr_accessor :verbose
-
-    def pr?
-      @pr != "false"
-    end
 
     # @return [String] commit range (e.g.: begin...end commit)
     def range
@@ -56,6 +42,51 @@ class JohnnyFive
       end
     end
 
+    def each(&block)
+      files.each(&block)
+    end
+
+    def files
+      git("log --name-only --pretty=\"format:\" #{range}").split("\n").uniq.sort
+    end
+
+    def commits
+      git("log --oneline --decorate #{range}").split("\n")
+    end
+
+    private
+
+    def git(args, default_value = "")
+      ret = `git #{args} 2> /dev/null`.chomp
+      $CHILD_STATUS.to_i == 0 ? ret : default_value
+    end
+  end
+
+  # Travis environment and git configuration
+  class Travis
+    extend Forwardable
+
+    # @return [String] branch being built (e.g.: master)
+    attr_accessor :branch
+    # @return [Boolean] true to check all files on the filesystem against rules
+    attr_accessor :check
+    # @return [String] component being built
+    attr_accessor :component
+    # @return [String] pull request number (e.g.: "555" or "false" for a branch)
+    attr_accessor :pr
+    # @return [Boolean] true to show verbose messages
+    attr_accessor :verbose
+
+    def_delegators :@files, :commit_range, :commit_range=, :commits, :files, :range
+
+    def initialize(files)
+      @files = files
+    end
+
+    def pr?
+      @pr != "false"
+    end
+
     def list(name, always_display = true)
       entries = yield
       if always_display || !entries.empty?
@@ -66,14 +97,6 @@ class JohnnyFive
       end
     end
 
-    def files(ref = range)
-      git("log --name-only --pretty=\"format:\" #{ref}").split("\n").uniq.sort
-    end
-
-    def commits(ref = range)
-      git("log --oneline --decorate #{ref}").split("\n")
-    end
-
     def inform
       puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
       puts "COMPONENT    : #{component}"
@@ -81,13 +104,6 @@ class JohnnyFive
       list("COMMITS") { commits }
       list("FILES") { files } if verbose
       self
-    end
-
-    private
-
-    def git(args, default_value = "")
-      ret = `git #{args} 2> /dev/null`.chomp
-      $CHILD_STATUS.to_i == 0 ? ret : default_value
     end
   end
 
@@ -234,7 +250,8 @@ class JohnnyFive
   attr_reader :travis, :sherlock
 
   def initialize
-    @travis = Travis.new
+    @files = GitFileList.new
+    @travis = Travis.new(@files)
     @sherlock = Sherlock.new(@travis)
   end
 
