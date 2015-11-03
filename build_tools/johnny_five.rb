@@ -62,6 +62,60 @@ class JohnnyFive
     end
   end
 
+  class RuleList
+    def initialize
+      @shallow_rules = {}
+      @non_dependent_rules = {}
+      @shallow_dependencies = {}
+    end
+
+    # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build (but not dependent rules)
+    attr_accessor :non_dependent_rules
+    # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build
+    attr_accessor :shallow_rules
+    # @return [Hash<String,Array<String>] target and targets that will trigger a build
+    attr_accessor :shallow_dependencies
+
+    # @param targets [Array<String>] list of targets. (please expand with `dependencies` first)
+    # @return [Array<Regexp>] rules for all these targets
+    def rules(targets)
+      targets.flat_map { |target| shallow_rules[target] }.uniq.compact
+    end
+
+    # @param targets [Array<String>]
+    # @return targets [Array<String>] list of all targets and dependent targets
+    def dependencies(targets)
+      main_target = targets.detect { |target| target != :all }
+      count = 0
+      # keep doing this until we stop adding some
+      while count != targets.size
+        count = targets.size
+        targets += targets.flat_map { |target| shallow_dependencies[target] }
+        targets.compact!
+        targets.uniq!
+      end
+      # all the rules that target only this build
+      targets += (non_dependent_rules[main_target] || [])
+      targets.flatten! || targets
+    end
+
+    def resolve(target)
+      targets = dependencies([target, :all])
+      regexps = rules(targets)
+      [targets, regexps, Regexp.union(regexps)]
+    end
+
+    def regexp(target)
+      resolve(target).last
+    end
+
+    def all
+      Regexp.union((shallow_rules.values.flatten + non_dependent_rules.values.flatten).uniq)
+    end
+
+    alias_method :[], :regexp
+  end
+
   # Travis environment and git configuration
   class Travis
     extend Forwardable
@@ -111,24 +165,19 @@ class JohnnyFive
   class Sherlock
     extend Forwardable
 
-    def initialize(travis)
+    def initialize(travis, files, rules)
       @travis = travis
-      @shallow_rules = {}
-      @non_dependent_rules = {}
-      @shallow_dependencies = {}
+      @files = files
+      @rules = rules
       @branches = []
     end
 
-    # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build (but not dependent rules)
-    attr_accessor :non_dependent_rules
-    # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build
-    attr_accessor :shallow_rules
-    # @return [Hash<String,Array<String>] target and targets that will trigger a build
-    attr_accessor :shallow_dependencies
     # @return [Array<String>|Nil] For a non-PR, branches that will trigger a build (all others will be ignored)
     attr_accessor :branches
 
-    def_delegators :@travis, :branch, :check, :component, :files, :list, :pr?, :verbose
+    def_delegators :@travis, :branch, :check, :component, :list, :pr?, :verbose
+    def_delegators :@files, :files
+    def_delegators :@rules, :shallow_rules, :shallow_dependencies, :non_dependent_rules
 
     # main logic to determine what to do
     def deduce
@@ -149,17 +198,14 @@ class JohnnyFive
 
     # @return [Boolean] true if the changed files trigger this target
     def triggered?(target, src_files = files)
-      targets = dependencies([target, :all])
-      regexps = rules(targets)
-      regexp = Regexp.union(regexps)
-      list("DETECT:") { targets } if verbose || check
-      list("REGEX:") { regexps } if check
-
+      targets, regexps, regexp = @rules.resolve(target)
+      list("DETECT:") { targets } if verbose
+      list("REGEX:") { regexps } if verbose || check
       src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by change to file #{fn}" if fn }
     end
 
     def sanity_check(files = all_files)
-      all_rules = Regexp.union((shallow_rules.values.flatten + non_dependent_rules.values.flatten).uniq)
+      all_rules = @rules.all
       list("UNCOVERED:", false) { files.select { |fn| !all_rules.match(fn) } }
     end
 
@@ -168,29 +214,6 @@ class JohnnyFive
     # @return [Array<String>] all files in the current directory 
     def all_files
       Dir['**/*'].select { |fn| File.file?(fn) } + Dir['.[a-z]*']
-    end
-
-    # @param targets [Array<String>] list of targets. (please expand with `dependencies` first)
-    # @return [Array<Regexp>] rules for all these targets
-    def rules(targets)
-      targets.flat_map { |target| shallow_rules[target] }.uniq.compact
-    end
-
-    # @param targets [Array<String>]
-    # @return targets [Array<String>] list of all targets and dependent targets
-    def dependencies(targets)
-      main_target = targets.detect { |target| target != :all }
-      count = 0
-      # keep doing this until we stop adding some
-      while count != targets.size
-        count = targets.size
-        targets += targets.flat_map { |target| shallow_dependencies[target] }
-        targets.compact!
-        targets.uniq!
-      end
-      # all the rules that target only this build
-      targets += (non_dependent_rules[main_target] || [])
-      targets.flatten! || targets
     end
   end
 
@@ -251,8 +274,9 @@ class JohnnyFive
 
   def initialize
     @files = GitFileList.new
+    @rules = RuleList.new
     @travis = Travis.new(@files)
-    @sherlock = Sherlock.new(@travis)
+    @sherlock = Sherlock.new(@travis, @files, @rules)
   end
 
   def parse(argv, env)
