@@ -15,7 +15,8 @@ ruby build_tools/johnny_five.rb \
 if [[ -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] ; then
   # change into a directory with minimal environment
   # this will NOP the rest of the build
-  cd build_tools
+  # cd build_tools
+  :
 elif [[ -n "${GEM}" ]] ; then
   cd gems/${GEM}
 else

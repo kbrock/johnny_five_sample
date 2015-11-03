@@ -23,4 +23,4 @@ before_install:
 before_script:
 - source ${TRAVIS_BUILD_DIR}/build_tools/before_script.sh
 script:
-- bundle exec rake ${TEST_SUITE+test:$TEST_SUITE}
+- '[[ -f "${TRAVIS_BUILD_DIR}/.skip-ci" ]] || bundle exec rake ${TEST_SUITE+test:$TEST_SUITE}'
