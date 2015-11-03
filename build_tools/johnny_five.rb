@@ -4,7 +4,7 @@ require 'forwardable'
 require 'optionparser'
 
 class JohnnyFive
-  VERSION = "0.0.3"
+  VERSION = "0.0.4"
 
   # Parser for the command line
   class OptSetter
@@ -191,7 +191,6 @@ class JohnnyFive
     attr_reader :sherlock, :travis, :main
     def_delegators :@sherlock, :branches, :branches=, :non_dependent_rules, :shallow_rules, :shallow_dependencies
     def_delegators :@travis, :branch=, :check=, :commit_range=, :component=, :verbose=
-    def_delegators :@main, :exit_value=, :touch=
 
     def suite(name)
       @suite = name
@@ -232,10 +231,6 @@ class JohnnyFive
     end
   end
 
-  # @return [String|Nil] name of file to touch if no files have changed
-  attr_accessor :touch
-  # @return [Number|Nil] value of exit status if no files have changed
-  attr_accessor :exit_value
   attr_reader :travis, :sherlock
 
   def initialize
@@ -254,10 +249,6 @@ class JohnnyFive
         o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
         o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
       end
-      opt(opts, self, env) do |o|
-        o.opt(:exit_value, "--exit NUMBER", "if the build did not change, exit with this")
-        o.opt(:touch, "--touch STRING", "if the build has not changed, touch this file")
-      end
       opts.on("--config STRING", "Use configuration file") { |file_name| require File.expand_path(file_name, Dir.pwd) }
     end
     options.parse!(argv)
@@ -272,11 +263,9 @@ class JohnnyFive
     skip!(reason) unless run_it
   end
 
-  # logic
   def skip!(reason)
-    $stderr.puts "==> #{reason} <=="
-    File.write(touch, reason) if touch
-    exit(exit_value.to_i) if exit_value
+    puts "==> #{reason} <=="
+    exit(1)
   end
 
   def opt(opts, model, env)
