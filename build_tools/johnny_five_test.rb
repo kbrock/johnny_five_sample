@@ -14,10 +14,10 @@ class TestJohnnyFive < Minitest::Test
       "TRAVIS_COMMIT_RANGE" => "9e59113ba4...d19278a8f6"
     )
 
-    assert_equal "master", johnny.travis.branch ##
-    assert_equal "1", johnny.travis.pr
-    assert_equal true, johnny.travis.pr?
-    assert_equal "9e59113ba4...d19278a8f6", johnny.travis.range
+    assert_equal "master", johnny.sherlock.branch ##
+    assert_equal "1", johnny.sherlock.pr
+    assert_equal true, johnny.sherlock.pr?
+    assert_equal "9e59113ba4...d19278a8f6", johnny.files.range
   end
 
   def test_parse_master
@@ -27,10 +27,10 @@ class TestJohnnyFive < Minitest::Test
       "TRAVIS_COMMIT_RANGE" => "9e59113ba4...9130838e79"
     )
 
-    assert_equal "master", johnny.travis.branch
-    assert_equal "false", johnny.travis.pr
-    assert_equal false, johnny.travis.pr?
-    assert_equal "9e59113ba4...9130838e79", johnny.travis.range
+    assert_equal "master", johnny.sherlock.branch
+    assert_equal "false", johnny.sherlock.pr
+    assert_equal false, johnny.sherlock.pr?
+    assert_equal "9e59113ba4...9130838e79", johnny.files.range
   end
 end
 

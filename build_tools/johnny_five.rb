@@ -23,10 +23,10 @@ class JohnnyFive
     end
 
     def each(&block)
-      files.each(&block)
+      all.each(&block)
     end
 
-    def files
+    def all
       git("log --name-only --pretty=\"format:\" #{range}").split("\n").uniq.sort
     end
 
@@ -44,9 +44,9 @@ class JohnnyFive
 
   class RuleList
     def initialize
-      @shallow_rules = {}
-      @non_dependent_rules = {}
-      @shallow_dependencies = {}
+      @shallow_rules        = Hash.new { |hash, key| hash[key] = [] }
+      @non_dependent_rules  = Hash.new { |hash, key| hash[key] = [] }
+      @shallow_dependencies = Hash.new { |hash, key| hash[key] = [] }
     end
 
     # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build (but not dependent rules)
@@ -75,32 +75,36 @@ class JohnnyFive
         targets.uniq!
       end
       # all the rules that target only this build
-      targets += (non_dependent_rules[main_target] || [])
+      targets += non_dependent_rules[main_target]
       targets.flatten! || targets
     end
 
+    # verbose / debugging version of regexp / []
     def resolve(target)
       targets = dependencies([target, :all])
       regexps = rules(targets)
       [targets, regexps, Regexp.union(regexps)]
     end
 
+    # @return [Regexp] rule to match this target
     def regexp(target)
       resolve(target).last
     end
+    alias_method :[], :regexp
 
+    # @return [Regexp] rule to match every file (for sanity checks)
     def all
       Regexp.union((shallow_rules.values.flatten + non_dependent_rules.values.flatten).uniq)
     end
-
-    alias_method :[], :regexp
   end
 
-  # Travis environment and git configuration
-  class Travis
+  # uses facts to deduce a plan
+  class Sherlock
     extend Forwardable
 
-    def initialize
+    def initialize(files, rules)
+      @files = files
+      @rules = rules
       @branches = []
     end
 
@@ -116,46 +120,24 @@ class JohnnyFive
     attr_accessor :pr
     # @return [Boolean] true to show verbose messages
     attr_accessor :verbose
-  end
 
-  # uses facts to deduce a plan
-  class Sherlock
-    extend Forwardable
+    attr_accessor :files, :rules
 
-    def initialize(travis, files, rules)
-      @travis = travis
-      @files = files
-      @rules = rules
+    def pr?
+      pr != "false"
     end
 
-    def_delegators :@travis, :branch, :branches, :check, :component, :pr, :verbose
-    def_delegators :@files, :files, :range, :commit_range, :commits
-    def_delegators :@rules, :shallow_rules, :shallow_dependencies, :non_dependent_rules
-
-    # helpers
-
-    def sanity_check(files = all_files)
-      all_rules = @rules.all
-      list("UNCOVERED:", false) { files.select { |fn| !all_rules.match(fn) } }
+    def branch_match?
+      branch.nil? || branch.empty? || branches.empty? || branches.include?(branch)
     end
 
-    def inform
-      puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
-      puts "COMPONENT    : #{component}"
-      puts "COMMIT_RANGE : #{range}#{" (derived from '#{commit_range}')" if range != commit_range}"
-      list("COMMITS") { commits }
-      list("FILES") { files } if verbose
-      self
-    end
-
-    def list(name, always_display = true)
-      entries = yield
-      if always_display || !entries.empty?
-        puts "======="
-        puts "#{name}"
-        puts entries.map { |fn| " - #{fn}" }
-        puts
-      end
+    # @return [Boolean] true if the changed files trigger this target
+    def triggered?(target)
+      return true if component.nil? || component.empty?
+      targets, regexps, regexp = @rules.resolve(target)
+      list("DETECT:") { targets } if verbose
+      list("REGEX:") { regexps } if verbose || check
+      files.all.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by change to file #{fn}" if fn }
     end
 
     # main logic to determine what to do
@@ -175,27 +157,45 @@ class JohnnyFive
       end
     end
 
-    def pr?
-      @pr != "false"
+    def inform
+      puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
+      puts "COMPONENT    : #{component}"
+      puts "COMMIT_RANGE : #{files.range}#{" (derived from '#{files.commit_range}')" if files.range != files.commit_range}"
+      list("COMMITS") { files.commits }
+      list("FILES") { files } if verbose
+      self
     end
 
-    # @return [Boolean] true if the changed files trigger this target
-    def triggered?(target, src_files = files)
-      return true if component.nil? || component.empty?
-      targets, regexps, regexp = @rules.resolve(target)
-      list("DETECT:") { targets } if verbose
-      list("REGEX:") { regexps } if verbose || check
-      src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by change to file #{fn}" if fn }
+    def sanity_check
+      all_files = every_file
+      all_rules = rules.all
+      list("UNCOVERED:", false) { all_files.select { |fn| !all_rules.match(fn) } }
     end
 
-    def branch_match?
-      branch.nil? || branch.empty? || branches.empty? || branches.include?(branch)
+    def run
+      inform
+      sanity_check if check
+      run_it, reason = deduce
+      unless run_it
+        puts "==> #{reason} <=="
+        exit(1)
+      end
     end
 
-    # private
+    private
+
+    def list(name, always_display = true)
+      entries = yield
+      if always_display || !entries.empty?
+        puts "======="
+        puts "#{name}"
+        puts entries.map { |fn| " - #{fn}" }
+        puts
+      end
+    end
 
     # @return [Array<String>] all files in the current directory 
-    def all_files
+    def every_file
       Dir['**/*'].select { |fn| File.file?(fn) } + Dir['.[a-z]*']
     end
   end
@@ -224,17 +224,17 @@ class JohnnyFive
   class DslTranslator
     extend Forwardable
 
-    def initialize(main, sherlock, travis, files, rules)
+    def initialize(main, sherlock, files, rules)
       @main = main
-      @travis = travis
-      @files = files
-      @rules = rules
+      @sherlock = sherlock
+      # @files = files
+      # @rules = rules
     end
 
-    attr_reader :sherlock, :travis, :main
-    def_delegators :@travis, :branch=, :branches, :branches=, :check=, :component=, :verbose=
-    def_delegators :@rules, :non_dependent_rules, :shallow_rules, :shallow_dependencies
-    def_delegators :@files, :commit_range=
+    attr_reader :sherlock, :main
+    def_delegators :sherlock, :branch=, :branches, :branches=, :check=, :component=, :verbose=, :rules, :files
+    def_delegators :rules, :non_dependent_rules, :shallow_rules, :shallow_dependencies
+    def_delegators :files, :commit_range=
 
     def suite(name)
       @suite = name
@@ -277,26 +277,25 @@ class JohnnyFive
     end
   end
 
-  attr_reader :travis, :sherlock
+  attr_reader :sherlock, :files, :rules
 
   def initialize
     @files = GitFileList.new
     @rules = RuleList.new
-    @travis = Travis.new
-    @sherlock = Sherlock.new(@travis, @files, @rules)
+    @sherlock = Sherlock.new(@files, @rules)
   end
 
   def parse(argv, env)
     options = OptionParser.new do |opts|
       opts.version = VERSION
-      opt(opts, travis, env) do |o|
+      opt(opts, sherlock, env) do |o|
         o.opt(:branch, "TRAVIS_BRANCH", "--branch STRING", "Branch being built")
         o.opt(:check, "--check", "validate that every file on the filesystem has a rule")
         o.opt(:component, "--component STRING", "name of component being built")
         o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
         o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
       end
-      opt(opts, @files, env) do |o|
+      opt(opts, files, env) do |o|
         o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
       end
       opts.on("--config STRING", "Use configuration file") { |file_name| require File.expand_path(file_name, Dir.pwd) }
@@ -306,24 +305,16 @@ class JohnnyFive
     self
   end
 
-  def run
-    sherlock.inform
-    sherlock.sanity_check if travis.check
-    run_it, reason = sherlock.deduce
-    skip!(reason) unless run_it
-  end
-
-  def skip!(reason)
-    puts "==> #{reason} <=="
-    exit(1)
-  end
-
   def opt(opts, model, env)
     yield OptSetter.new(opts, model, env)
   end
 
   def translator
-    DslTranslator.new(self, sherlock, travis, @files, @rules)
+    DslTranslator.new(self, sherlock, files, rules)
+  end
+
+  def run
+    sherlock.run
   end
 
   def self.config
