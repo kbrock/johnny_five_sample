@@ -23,10 +23,10 @@ class JohnnyFive
     end
 
     def each(&block)
-      all.each(&block)
+      files.each(&block)
     end
 
-    def all
+    def files
       git("log --name-only --pretty=\"format:\" #{range}").split("\n").uniq.sort
     end
 
@@ -58,8 +58,8 @@ class JohnnyFive
 
     # @param targets [Array<String>] list of targets. (please expand with `dependencies` first)
     # @return [Array<Regexp>] rules for all these targets
-    def rules(targets)
-      targets.flat_map { |target| shallow_rules[target] }.uniq.compact
+    def rules(targets, primary_target)
+      (targets.flat_map { |target| shallow_rules[target] } + non_dependent_rules[primary_target]).uniq.compact
     end
 
     # @param targets [Array<String>]
@@ -74,15 +74,13 @@ class JohnnyFive
         targets.compact!
         targets.uniq!
       end
-      # all the rules that target only this build
-      targets += non_dependent_rules[main_target]
-      targets.flatten! || targets
+      targets
     end
 
     # verbose / debugging version of regexp / []
     def resolve(target)
       targets = dependencies([target, :all])
-      regexps = rules(targets)
+      regexps = rules(targets, target)
       [targets, regexps, Regexp.union(regexps)]
     end
 
@@ -93,7 +91,7 @@ class JohnnyFive
     alias_method :[], :regexp
 
     # @return [Regexp] rule to match every file (for sanity checks)
-    def all
+    def every
       Regexp.union((shallow_rules.values.flatten + non_dependent_rules.values.flatten).uniq)
     end
   end
@@ -137,7 +135,7 @@ class JohnnyFive
       targets, regexps, regexp = @rules.resolve(target)
       list("DETECT:") { targets } if verbose
       list("REGEX:") { regexps } if verbose || check
-      files.all.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by change to file #{fn}" if fn }
+      files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by change to file #{fn}" if fn }
     end
 
     # main logic to determine what to do
@@ -168,7 +166,7 @@ class JohnnyFive
 
     def sanity_check
       all_files = every_file
-      all_rules = rules.all
+      all_rules = rules.every
       list("UNCOVERED:", false) { all_files.select { |fn| !all_rules.match(fn) } }
     end
 
