@@ -42,7 +42,8 @@ JohnnyFive.config do |matrix|
   end
 
   matrix.suite "one" do |cfg|
-    cfg.file "gems/one/**/*", :except => %r{gems/one/test}
+    # would like to say except test
+    cfg.file "gems/one/**/*"
     cfg.test "gems/one/test/**/*"
   end
 

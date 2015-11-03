@@ -9,16 +9,16 @@ class JohnnyFive
   class GitFileList
     include Enumerable
     # @return [String] the commits that have changed for this build (e.g.: first_commit...last_commit)
-    attr_accessor :commit_range
+    attr_accessor :range
 
     # @return [String] commit range (e.g.: begin...end commit)
     def range
-      if commit_range == "" || commit_range.nil?
-        "FETCH_HEAD^...FETCH_HEAD" # HEAD
-      elsif !commit_range.include?("...")
-        "#{commit_range}^...#{commit_range}"
+      if @range == "" || @range.nil?
+        "FETCH_HEAD^...FETCH_HEAD"
+      elsif !@range.include?("...")
+        "#{@range}^...#{@range}"
       else
-        commit_range
+        @range
       end
     end
 
@@ -44,9 +44,9 @@ class JohnnyFive
 
   class RuleList
     def initialize
-      @shallow_rules        = Hash.new { |hash, key| hash[key] = [] }
-      @non_dependent_rules  = Hash.new { |hash, key| hash[key] = [] }
-      @shallow_dependencies = Hash.new { |hash, key| hash[key] = [] }
+      @shallow_rules        = {}
+      @non_dependent_rules  = {}
+      @shallow_dependencies = {}
     end
 
     # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build (but not dependent rules)
@@ -56,16 +56,27 @@ class JohnnyFive
     # @return [Hash<String,Array<String>] target and targets that will trigger a build
     attr_accessor :shallow_dependencies
 
+    def add_rule(name, value)
+      add_all(shallow_rules, name, glob2regex(value))
+    end
+
+    def add_shallow_rule(name, value)
+      add_all(non_dependent_rules, name, glob2regex(value))
+    end
+
+    def add_dependency(name, value)
+      add_all(shallow_dependencies, name, value)
+    end
+
     # @param targets [Array<String>] list of targets. (please expand with `dependencies` first)
     # @return [Array<Regexp>] rules for all these targets
     def rules(targets, primary_target)
       (targets.flat_map { |target| shallow_rules[target] } + non_dependent_rules[primary_target]).uniq.compact
     end
 
-    # @param target [String>]
+    # @param targets [Array<String>]
     # @return targets [Array<String>] list of all targets and dependent targets
-    def dependencies(main_target)
-      targets = [main_target, :all]
+    def dependencies(targets)
       count = 0
       # keep doing this until we stop adding some
       while count != targets.size
@@ -79,7 +90,7 @@ class JohnnyFive
 
     # verbose / debugging version of regexp / []
     def resolve(target)
-      targets = dependencies(target)
+      targets = dependencies([target, :all])
       regexps = rules(targets, target)
       [targets, regexps, Regexp.union(regexps)]
     end
@@ -94,7 +105,38 @@ class JohnnyFive
     def every
       Regexp.union((shallow_rules.values.flatten + non_dependent_rules.values.flatten).uniq)
     end
+
+    private
+
+    def add_all(target, name, value)
+      if name.kind_of?(Array)
+        name.each do |n|
+          (target[n] ||= []) << value
+        end
+      else
+        (target[name] ||= []) << value
+      end
+    end
+
+    # convert a glob to a regular expression
+    def glob2regex(glob, _options = {})
+      return glob if glob.kind_of?(Regexp)
+
+      Regexp.new(glob.gsub(/([{},.]|\*\*\/\*|\*\*\/|\*)/) do
+        case $1
+        when '**/*' then '.*'   # directory and file match
+        when '*'    then '[^/]*' # file match
+        when '**/'  then '.*/'   # directory match
+        when '{'    then '(?:'   # grouping of filenames
+        when '}'    then ')'     # end grouping of names
+        when ','    then '|'     # or for grouping
+        when '.'    then '\.'    # dot in filename
+        end
+      end)
+    end
   end
+
+  ########### FOLD ###########
 
   # uses facts to deduce a plan
   class Sherlock
@@ -158,7 +200,7 @@ class JohnnyFive
     def inform
       puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
       puts "COMPONENT    : #{component}"
-      puts "COMMIT_RANGE : #{files.range}#{" (derived from '#{files.commit_range}')" if files.range != files.commit_range}"
+      puts "COMMIT_RANGE : #{files.range}"
       list("COMMITS") { files.commits }
       list("FILES") { files } if verbose
       self
@@ -231,57 +273,29 @@ class JohnnyFive
 
     attr_reader :sherlock, :main
     def_delegators :sherlock, :branch=, :branches, :branches=, :check=, :component=, :verbose=, :rules, :files
-    def_delegators :rules, :non_dependent_rules, :shallow_rules, :shallow_dependencies
-    def_delegators :files, :commit_range=
+    def_delegators :rules, :add_dependency, :add_rule, :add_shallow_rule
+    def_delegators :files, :range=
 
     def suite(name)
-      @suite = name
+      @suite = name.kind_of?(Array) ? name : [name]
       yield self
     end
 
     # add a file that triggers this rule and all dependencies
-    def file(glob, targets = {}, options = {}, rules = shallow_rules)
-      targets, options = [@suite], targets if targets.kind_of?(Hash)
-
-      targets = [targets] unless targets.kind_of?(Array)
-      targets.each do |target|
-        rules[target] << regex(glob, options)
-      end
+    def file(glob)
+      add_rule(@suite, glob)
       self
     end
 
     # add a file that triggers this rule (but not dependencies)
-    def test(glob, targets = nil, options = {})
-      file(glob, targets, options, non_dependent_rules)
-    end
-
-    # add a dependency between 2 rules
-    def trigger(src_target, targets = nil)
-      src_target, targets = @suite, src_target if targets.nil?
-      targets = [targets] unless targets.kind_of?(Array)
-      targets.each do |target|
-        shallow_dependencies[target] << src_target
-      end
+    def test(glob)
+      add_shallow_rule(@suite, glob)
       self
     end
 
-    private
-
-    # convert a glob to a regular expression
-    def regex(glob, options)
-      return glob if glob.kind_of?(Regexp)
-
-      Regexp.new(glob.gsub(/([{},.]|\*\*\/\*|\*\*\/|\*)/) do
-        case $1
-        when '**/*' then '.*'   # directory and file match
-        when '*'   then '[^/]*' # file match
-        when '**/' then '.*/'   # directory match
-        when '{'   then '(?:'   # grouping of filenames
-        when '}'   then ')'     # end grouping of names
-        when ','   then '|'     # or for grouping
-        when '.'   then '\.'    # dot in filename
-        end
-      end)
+    # add a dependency between 2 rules
+    def trigger(target)
+      add_dependency(@suite, target)
     end
   end
 
@@ -304,11 +318,11 @@ class JohnnyFive
         o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
       end
       opt(opts, files, env) do |o|
-        o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
+        o.opt(:range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
       end
-      opts.on("--config STRING", "Use configuration file") { |file_name| require File.expand_path(file_name, Dir.pwd) }
     end
     options.parse!(argv)
+    argv.each { |file_name| require File.expand_path(file_name, Dir.pwd) }
 
     self
   end
