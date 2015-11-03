@@ -139,7 +139,7 @@ class JohnnyFive
       list("DETECT:") { targets } if verbose || check
       list("REGEX:") { regexps } if check
 
-      src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by #{fn}" if fn }
+      src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by change to file #{fn}" if fn }
     end
 
     def sanity_check(files = all_files)

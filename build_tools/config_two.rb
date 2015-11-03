@@ -37,6 +37,10 @@ JohnnyFive.config do |matrix|
     cfg.test "test/integration", :ext => "_test.rb"
   end
 
+  matrix.suite "j5" do |cfg|
+    cfg.file "build_tools", :ext => ""
+  end
+
   matrix.suite "one" do |cfg|
     cfg.file "gems/one", :except => %r{gems/one/test}, :ext => ""
     cfg.test "gems/one/test", :ext => ""
@@ -47,7 +51,6 @@ JohnnyFive.config do |matrix|
     cfg.file "Rakefile", :exact => true
 
     cfg.file "bin", :ext => ""
-    cfg.file "build_tools", :ext => ""
     cfg.file "log", :ext => ""
     cfg.file "lib/tasks", :ext => ""
     cfg.file "tmp", :ext => ""

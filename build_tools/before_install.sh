@@ -9,7 +9,7 @@ echo "gem: --no-ri --no-rdoc --no-document" > ~/.gemrc
 # determine if we should even run this matrix entry
 
 ruby build_tools/johnny_five.rb \
-        --component ${TEST_SUITE:-$GEM}-spec \
+        --component ${TEST_SUITE:-$GEM} \
         --config build_tools/config_two.rb || touch .skip-ci
 
 if [[ -f ${TRAVIS_BUILD_DIR}/.skip-ci ]] ; then
