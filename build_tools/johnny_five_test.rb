@@ -8,7 +8,7 @@ class TestJohnnyFive < Minitest::Test
   end
 
   def test_parse_pr
-    johnny.parse(["--verbose", "--config", "#{__dir__}/config_one.rb"],
+    johnny.parse(["--verbose", "--config", "#{__dir__}/config_two.rb"],
       "TRAVIS_BRANCH" => "master", 
       "TRAVIS_PULL_REQUEST" => "1",
       "TRAVIS_COMMIT_RANGE" => "9e59113ba4...d19278a8f6"
@@ -21,7 +21,7 @@ class TestJohnnyFive < Minitest::Test
   end
 
   def test_parse_master
-    johnny.parse(["--verbose", "--config", "#{__dir__}/config_one.rb"],
+    johnny.parse(["--verbose", "--config", "#{__dir__}/config_two.rb"],
       "TRAVIS_BRANCH" => "master", 
       "TRAVIS_PULL_REQUEST" => "false",
       "TRAVIS_COMMIT_RANGE" => "9e59113ba4...9130838e79"
