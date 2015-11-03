@@ -6,26 +6,6 @@ require 'optionparser'
 class JohnnyFive
   VERSION = "0.0.4"
 
-  # Parser for the command line
-  class OptSetter
-    def initialize(opts, model, env)
-      @opts  = opts
-      @model = model
-      @env = env
-    end
-
-    def opt(value, *args)
-      # support environment variable being specified
-      unless args[0].start_with?("-")
-        env = args.shift
-        ev = @env[env]
-        @model.send("#{value}=", ev) if ev
-        args.last << " (#{env}=#{ev || "<not set>"})"
-      end
-      @opts.on(*args) { |v| @model.send("#{value}=", v) }
-    end
-  end
-
   class GitFileList
     include Enumerable
     # @return [String] the commits that have changed for this build (e.g.: first_commit...last_commit)
@@ -120,8 +100,14 @@ class JohnnyFive
   class Travis
     extend Forwardable
 
+    def initialize
+      @branches = []
+    end
+
     # @return [String] branch being built (e.g.: master)
     attr_accessor :branch
+    # @return [Array<String>|Nil] For a non-PR, branches that will trigger a build (all others will be ignored)
+    attr_accessor :branches
     # @return [Boolean] true to check all files on the filesystem against rules
     attr_accessor :check
     # @return [String] component being built
@@ -130,15 +116,36 @@ class JohnnyFive
     attr_accessor :pr
     # @return [Boolean] true to show verbose messages
     attr_accessor :verbose
+  end
 
-    def_delegators :@files, :commit_range, :commit_range=, :commits, :files, :range
+  # uses facts to deduce a plan
+  class Sherlock
+    extend Forwardable
 
-    def initialize(files)
+    def initialize(travis, files, rules)
+      @travis = travis
       @files = files
+      @rules = rules
     end
 
-    def pr?
-      @pr != "false"
+    def_delegators :@travis, :branch, :branches, :check, :component, :pr, :verbose
+    def_delegators :@files, :files, :range, :commit_range, :commits
+    def_delegators :@rules, :shallow_rules, :shallow_dependencies, :non_dependent_rules
+
+    # helpers
+
+    def sanity_check(files = all_files)
+      all_rules = @rules.all
+      list("UNCOVERED:", false) { files.select { |fn| !all_rules.match(fn) } }
+    end
+
+    def inform
+      puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
+      puts "COMPONENT    : #{component}"
+      puts "COMMIT_RANGE : #{range}#{" (derived from '#{commit_range}')" if range != commit_range}"
+      list("COMMITS") { commits }
+      list("FILES") { files } if verbose
+      self
     end
 
     def list(name, always_display = true)
@@ -151,44 +158,16 @@ class JohnnyFive
       end
     end
 
-    def inform
-      puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
-      puts "COMPONENT    : #{component}"
-      puts "COMMIT_RANGE : #{range}#{" (derived from '#{commit_range}')" if range != commit_range}"
-      list("COMMITS") { commits }
-      list("FILES") { files } if verbose
-      self
-    end
-  end
-
-  # uses facts to deduce a plan
-  class Sherlock
-    extend Forwardable
-
-    def initialize(travis, files, rules)
-      @travis = travis
-      @files = files
-      @rules = rules
-      @branches = []
-    end
-
-    # @return [Array<String>|Nil] For a non-PR, branches that will trigger a build (all others will be ignored)
-    attr_accessor :branches
-
-    def_delegators :@travis, :branch, :check, :component, :list, :pr?, :verbose
-    def_delegators :@files, :files
-    def_delegators :@rules, :shallow_rules, :shallow_dependencies, :non_dependent_rules
-
     # main logic to determine what to do
     def deduce
       if pr?
-        if component.nil? || component.empty? || triggered?(component)
+        if triggered?(component)
           [true, "building PR for #{component || "none specified"}"]
         else
           [false, "skipping PR for unchanged: #{component}"]
         end
       else
-        if branch.nil? || branch.empty? || branches.empty? || branches.include?(branch)
+        if branch_match?
           [true, "building branch: #{branch || "none specified"}"]
         else
           [false, "skipping branch: #{branch} (not #{branches.join(", ")})"]
@@ -196,17 +175,21 @@ class JohnnyFive
       end
     end
 
+    def pr?
+      @pr != "false"
+    end
+
     # @return [Boolean] true if the changed files trigger this target
     def triggered?(target, src_files = files)
+      return true if component.nil? || component.empty?
       targets, regexps, regexp = @rules.resolve(target)
       list("DETECT:") { targets } if verbose
       list("REGEX:") { regexps } if verbose || check
       src_files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by change to file #{fn}" if fn }
     end
 
-    def sanity_check(files = all_files)
-      all_rules = @rules.all
-      list("UNCOVERED:", false) { files.select { |fn| !all_rules.match(fn) } }
+    def branch_match?
+      branch.nil? || branch.empty? || branches.empty? || branches.include?(branch)
     end
 
     # private
@@ -217,25 +200,48 @@ class JohnnyFive
     end
   end
 
+  # Parser for the command line
+  class OptSetter
+    def initialize(opts, model, env)
+      @opts  = opts
+      @model = model
+      @env = env
+    end
+
+    def opt(value, *args)
+      # support environment variable being specified
+      unless args[0].start_with?("-")
+        env = args.shift
+        ev = @env[env]
+        @model.send("#{value}=", ev) if ev
+        args.last << " (#{env}=#{ev || "<not set>"})"
+      end
+      @opts.on(*args) { |v| @model.send("#{value}=", v) }
+    end
+  end
+
   # Configuration file Translator
   class DslTranslator
     extend Forwardable
 
-    def initialize(main, sherlock, travis)
+    def initialize(main, sherlock, travis, files, rules)
       @main = main
-      @sherlock = sherlock
       @travis = travis
+      @files = files
+      @rules = rules
     end
 
     attr_reader :sherlock, :travis, :main
-    def_delegators :@sherlock, :branches, :branches=, :non_dependent_rules, :shallow_rules, :shallow_dependencies
-    def_delegators :@travis, :branch=, :check=, :commit_range=, :component=, :verbose=
+    def_delegators :@travis, :branch=, :branches, :branches=, :check=, :component=, :verbose=
+    def_delegators :@rules, :non_dependent_rules, :shallow_rules, :shallow_dependencies
+    def_delegators :@files, :commit_range=
 
     def suite(name)
       @suite = name
       yield self
     end
 
+    # add a file that triggers this rule and all dependencies
     def file(glob, targets = nil, options = {}, rules = shallow_rules)
       targets, options = @suite, targets if targets.kind_of?(Hash)
 
@@ -246,10 +252,12 @@ class JohnnyFive
       self
     end
 
+    # add a file that triggers this rule (but not dependencies)
     def test(glob, targets = nil, options = {})
       file(glob, targets, options, non_dependent_rules)
     end
 
+    # add a dependency between 2 rules
     def trigger(src_target, targets = nil)
       src_target, targets = @suite, src_target if targets.nil?
       targets = [targets] unless targets.kind_of?(Array)
@@ -261,7 +269,6 @@ class JohnnyFive
 
     private
 
-    # TODO: find a way to support options except
     def regex(glob, options)
       # in the glob world, tack on '**/*#{options[:ext]}'
       ext = ".*#{options[:ext]}" if options[:ext]
@@ -275,7 +282,7 @@ class JohnnyFive
   def initialize
     @files = GitFileList.new
     @rules = RuleList.new
-    @travis = Travis.new(@files)
+    @travis = Travis.new
     @sherlock = Sherlock.new(@travis, @files, @rules)
   end
 
@@ -285,10 +292,12 @@ class JohnnyFive
       opt(opts, travis, env) do |o|
         o.opt(:branch, "TRAVIS_BRANCH", "--branch STRING", "Branch being built")
         o.opt(:check, "--check", "validate that every file on the filesystem has a rule")
-        o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
         o.opt(:component, "--component STRING", "name of component being built")
         o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
         o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
+      end
+      opt(opts, @files, env) do |o|
+        o.opt(:commit_range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
       end
       opts.on("--config STRING", "Use configuration file") { |file_name| require File.expand_path(file_name, Dir.pwd) }
     end
@@ -298,7 +307,7 @@ class JohnnyFive
   end
 
   def run
-    travis.inform
+    sherlock.inform
     sherlock.sanity_check if travis.check
     run_it, reason = sherlock.deduce
     skip!(reason) unless run_it
@@ -314,7 +323,7 @@ class JohnnyFive
   end
 
   def translator
-    DslTranslator.new(self, sherlock, travis)
+    DslTranslator.new(self, sherlock, travis, @files, @rules)
   end
 
   def self.config
