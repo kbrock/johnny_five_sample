@@ -6,54 +6,54 @@ JohnnyFive.config do |matrix|
   # controllers: Gemfile, one
   # models: Gemfile, one
   matrix.suite %w(controllers models) do |cfg|
-    cfg.file "Gemfile", :exact => true
-    cfg.file "config/", :ext => ""
+    cfg.file "Gemfile"
+    cfg.file "config/**/*"
     cfg.trigger "one"
   end
 
   # models: app/models/**/*.rb, test/fixtures
   matrix.suite "models" do |cfg|
-    cfg.file "app/models", :ext => ".rb"
-    cfg.file "db/", :ext => ".rb"
-    cfg.file "test/fixtures", :ext => ""
-    cfg.test "test/models", :ext => "_test.rb"
+    cfg.file "app/models/**/*"
+    cfg.file "db/**/*.rb"
+    cfg.file "test/fixtures/**/*"
+    cfg.test "test/models/**/*_test.rb"
   end
 
   matrix.suite "controllers" do |cfg|
-    cfg.file "app/{controllers,views}", :ext => ".rb"
-    cfg.file "app/views", :ext => ".jbuilder"
-    cfg.file "app/helpers", :ext => ".rb"
+    cfg.file "app/controllers/**/*.rb"
+    cfg.file "app/views/**/*"
+    cfg.file "app/helpers/**/*"
     cfg.trigger "models"
-    cfg.test "test/{controllers,views}/", :ext => "_test.rb"
-    cfg.test "test/helpers", :ext => "_test.rb"
+    cfg.test "test/{controllers,views}/**/*_test.rb"
+    cfg.test "test/helpers/**/*_test.rb"
   end
 
   matrix.suite "ui" do |cfg|
-    cfg.file "app/assets/", :ext => ""
-    cfg.file "config/", :ext => ""
-    cfg.file "public/", :ext => ""
-    cfg.file "vendor/", :ext => ""
+    cfg.file "app/assets/**/*"
+    cfg.file "config/**/*"
+    cfg.file "public/**/*"
+    cfg.file "vendor/**/*"
     cfg.trigger "controller"
-    cfg.test "test/integration/", :ext => "_test.rb"
+    cfg.test "test/integration/**/*_test.rb"
   end
 
   matrix.suite "j5" do |cfg|
-    cfg.file "build_tools/", :ext => ""
+    cfg.file "build_tools/**/*"
   end
 
   matrix.suite "one" do |cfg|
-    cfg.file "gems/one/", :except => %r{gems/one/test}, :ext => ""
-    cfg.test "gems/one/test", :ext => ""
+    cfg.file "gems/one/**/*", :except => %r{gems/one/test}
+    cfg.test "gems/one/test/**/*"
   end
 
   matrix.suite :none do |cfg|
-    cfg.file "README.md", :exact => true
-    cfg.file "Rakefile", :exact => true
+    cfg.file "README.md"
+    cfg.file "Rakefile"
 
-    cfg.file "bin/", :ext => ""
-    cfg.file "log/", :ext => ""
-    cfg.file "lib/tasks", :ext => ""
-    cfg.file "tmp/", :ext => ""
+    cfg.file "bin/**/*"
+    cfg.file "log/**/*"
+    cfg.file "lib/tasks/**/*"
+    cfg.file "tmp/**/*"
   end
 
   matrix.suite :all do |cfg|

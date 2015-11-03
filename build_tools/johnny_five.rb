@@ -62,10 +62,10 @@ class JohnnyFive
       (targets.flat_map { |target| shallow_rules[target] } + non_dependent_rules[primary_target]).uniq.compact
     end
 
-    # @param targets [Array<String>]
+    # @param target [String>]
     # @return targets [Array<String>] list of all targets and dependent targets
-    def dependencies(targets)
-      main_target = targets.detect { |target| target != :all }
+    def dependencies(main_target)
+      targets = [main_target, :all]
       count = 0
       # keep doing this until we stop adding some
       while count != targets.size
@@ -79,7 +79,7 @@ class JohnnyFive
 
     # verbose / debugging version of regexp / []
     def resolve(target)
-      targets = dependencies([target, :all])
+      targets = dependencies(target)
       regexps = rules(targets, target)
       [targets, regexps, Regexp.union(regexps)]
     end
@@ -192,7 +192,7 @@ class JohnnyFive
       end
     end
 
-    # @return [Array<String>] all files in the current directory 
+    # @return [Array<String>] all files in the current directory
     def every_file
       Dir['**/*'].select { |fn| File.file?(fn) } + Dir['.[a-z]*']
     end
@@ -240,12 +240,12 @@ class JohnnyFive
     end
 
     # add a file that triggers this rule and all dependencies
-    def file(glob, targets = nil, options = {}, rules = shallow_rules)
-      targets, options = @suite, targets if targets.kind_of?(Hash)
+    def file(glob, targets = {}, options = {}, rules = shallow_rules)
+      targets, options = [@suite], targets if targets.kind_of?(Hash)
 
       targets = [targets] unless targets.kind_of?(Array)
       targets.each do |target|
-        (rules[target] ||= []) << regex(glob, options)
+        rules[target] << regex(glob, options)
       end
       self
     end
@@ -260,18 +260,28 @@ class JohnnyFive
       src_target, targets = @suite, src_target if targets.nil?
       targets = [targets] unless targets.kind_of?(Array)
       targets.each do |target|
-        (shallow_dependencies[target] ||= []) << src_target
+        shallow_dependencies[target] << src_target
       end
       self
     end
 
     private
 
+    # convert a glob to a regular expression
     def regex(glob, options)
-      # in the glob world, tack on '**/*#{options[:ext]}'
-      ext = ".*#{options[:ext]}" if options[:ext]
-      # would be nice to replace '{' with '(?' to not capture
-      /#{glob.tr("{,}", "(|)")}#{ext}/
+      return glob if glob.kind_of?(Regexp)
+
+      Regexp.new(glob.gsub(/([{},.]|\*\*\/\*|\*\*\/|\*)/) do
+        case $1
+        when '**/*' then '.*'   # directory and file match
+        when '*'   then '[^/]*' # file match
+        when '**/' then '.*/'   # directory match
+        when '{'   then '(?:'   # grouping of filenames
+        when '}'   then ')'     # end grouping of names
+        when ','   then '|'     # or for grouping
+        when '.'   then '\.'    # dot in filename
+        end
+      end)
     end
   end
 
