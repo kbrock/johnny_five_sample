@@ -56,16 +56,16 @@ class JohnnyFive
     # @return [Hash<String,Array<String>] target and targets that will trigger a build
     attr_accessor :shallow_dependencies
 
-    def add_rule(name, value)
-      add_all(shallow_rules, name, glob2regex(value))
+    def add_rule(name, glob)
+      add_all(shallow_rules, name, glob2regex(glob))
     end
 
-    def add_shallow_rule(name, value)
-      add_all(non_dependent_rules, name, glob2regex(value))
+    def add_shallow_rule(name, glob)
+      add_all(non_dependent_rules, name, glob2regex(glob))
     end
 
-    def add_dependency(name, value)
-      add_all(shallow_dependencies, name, value)
+    def add_dependency(name, target)
+      add_all(shallow_dependencies, name, target)
     end
 
     # @param targets [Array<String>] list of targets. (please expand with `dependencies` first)
@@ -101,7 +101,7 @@ class JohnnyFive
     end
     alias_method :[], :regexp
 
-    # @return [Regexp] rule to match every file (for sanity checks)
+    # @return [Regexp] rule to match every file that is covered by a rule (for sanity checks)
     def every
       Regexp.union((shallow_rules.values.flatten + non_dependent_rules.values.flatten).uniq)
     end
@@ -277,7 +277,7 @@ class JohnnyFive
     def_delegators :files, :range=
 
     def suite(name)
-      @suite = name.kind_of?(Array) ? name : [name]
+      @suite = name
       yield self
     end
 
