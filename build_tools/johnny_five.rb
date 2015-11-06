@@ -42,84 +42,25 @@ class JohnnyFive
     end
   end
 
-  class RuleList
+  class Rules
     def initialize
-      @shallow_rules        = {}
-      @non_dependent_rules  = {}
-      @shallow_dependencies = {}
+      @target = Hash.new { |h, k| h[k] = [] }
     end
 
-    # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build (but not dependent rules)
-    attr_accessor :non_dependent_rules
-    # @return [Hash<String,Array<Regexp>] target and the files that will trigger a build
-    attr_accessor :shallow_rules
-    # @return [Hash<String,Array<String>] target and targets that will trigger a build
-    attr_accessor :shallow_dependencies
-
-    def add_rule(name, glob)
-      add_all(shallow_rules, name, glob2regex(glob))
+    def []=(name, value)
+      (name.kind_of?(Array) ? name : [name]).each { |n| @target[n] << value }
     end
 
-    def add_shallow_rule(name, glob)
-      add_all(non_dependent_rules, name, glob2regex(glob))
+    def [](names) # rule["name"] << won't work
+      (names.kind_of?(Array) ? names : [names]).flat_map { |name| @target[name] }
     end
 
-    def add_dependency(name, target)
-      add_all(shallow_dependencies, name, target)
-    end
-
-    # @param targets [Array<String>] list of targets. (please expand with `dependencies` first)
-    # @return [Array<Regexp>] rules for all these targets
-    def rules(targets, primary_target)
-      (targets.flat_map { |target| shallow_rules[target] } + non_dependent_rules[primary_target]).uniq.compact
-    end
-
-    # @param targets [Array<String>]
-    # @return targets [Array<String>] list of all targets and dependent targets
-    def dependencies(targets)
-      count = 0
-      # keep doing this until we stop adding some
-      while count != targets.size
-        count = targets.size
-        targets += targets.flat_map { |target| shallow_dependencies[target] }
-        targets.compact!
-        targets.uniq!
-      end
-      targets
-    end
-
-    # verbose / debugging version of regexp / []
-    def resolve(target)
-      targets = dependencies([target, :all])
-      regexps = rules(targets, target)
-      [targets, regexps, Regexp.union(regexps)]
-    end
-
-    # @return [Regexp] rule to match this target
-    def regexp(target)
-      resolve(target).last
-    end
-    alias_method :[], :regexp
-
-    # @return [Regexp] rule to match every file that is covered by a rule (for sanity checks)
-    def every
-      Regexp.union((shallow_rules.values.flatten + non_dependent_rules.values.flatten).uniq)
-    end
-
-    private
-
-    def add_all(target, name, value)
-      if name.kind_of?(Array)
-        name.each do |n|
-          (target[n] ||= []) << value
-        end
-      else
-        (target[name] ||= []) << value
-      end
+    def values
+      @target.values.flatten
     end
 
     # convert a glob to a regular expression
-    def glob2regex(glob, _options = {})
+    def self.glob2regex(glob, _options = {})
       return glob if glob.kind_of?(Regexp)
 
       Regexp.new(glob.gsub(/([{},.]|\*\*\/\*|\*\*\/|\*)/) do
@@ -133,6 +74,46 @@ class JohnnyFive
         when '.'    then '\.'    # dot in filename
         end
       end)
+    end
+  end
+
+  class RuleList
+    def initialize
+      @basic_rules        = Rules.new
+      @shallow_rules      = Rules.new
+      @basic_dependencies = Rules.new
+    end
+
+    # @return [Hash<String,Array<Regexp>] the files (value) that trigger a target (key)
+    attr_accessor :shallow_rules
+    # @return [Hash<String,Array<Regexp>] the files (galue) that trigger a target (key) and dependencies
+    attr_accessor :basic_rules
+    # @return [Hash<String,Array<String>] the targets (value) that trigger a target (key)
+    attr_accessor :basic_dependencies
+
+    # @param target [String]
+    # @return [Array<Regexp>] rules for all these targets
+    def [](target)
+      (basic_rules[dependencies(target)] + shallow_rules[target]).uniq.compact
+    end
+
+    # @return [Array<String>] list of all targets and dependent targets
+    def dependencies(target)
+      targets = [target, :all]
+      count = 0
+      # keep doing this until we stop adding some
+      while count != targets.size
+        count = targets.size
+        targets += basic_dependencies[targets]
+        targets.compact!
+        targets.uniq!
+      end
+      targets
+    end
+
+    # @return [Regexp] rule to match every file that is covered by a rule (for sanity checks)
+    def every
+      Regexp.union((basic_rules.values + shallow_rules.values).uniq)
     end
   end
 
@@ -174,9 +155,9 @@ class JohnnyFive
     # @return [Boolean] true if the changed files trigger this target
     def triggered?(target)
       return true if component.nil? || component.empty?
-      targets, regexps, regexp = @rules.resolve(target)
-      list("DETECT:") { targets } if verbose
-      list("REGEX:") { regexps } if verbose || check
+      list("DETECT:") { @rules.dependencies(target) } if verbose
+      list("REGEX:") { @rules[target] } if verbose || check
+      regexp = Regexp.union(@rules[target])
       files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by change to file #{fn}" if fn }
     end
 
@@ -273,7 +254,7 @@ class JohnnyFive
 
     attr_reader :sherlock, :main
     def_delegators :sherlock, :branch=, :branches, :branches=, :check=, :component=, :verbose=, :rules, :files
-    def_delegators :rules, :add_dependency, :add_rule, :add_shallow_rule
+    def_delegators :rules, :basic_dependencies, :basic_rules, :shallow_rules
     def_delegators :files, :range=
 
     def suite(name)
@@ -283,19 +264,17 @@ class JohnnyFive
 
     # add a file that triggers this rule and all dependencies
     def file(glob)
-      add_rule(@suite, glob)
-      self
+      basic_rules[@suite] = Rules.glob2regex(glob)
     end
 
     # add a file that triggers this rule (but not dependencies)
     def test(glob)
-      add_shallow_rule(@suite, glob)
-      self
+      shallow_rules[@suite] = Rules.glob2regex(glob)
     end
 
     # add a dependency between 2 rules
     def trigger(target)
-      add_dependency(@suite, target)
+      basic_dependencies[@suite] = target
     end
   end
 
