@@ -7,36 +7,22 @@ class JohnnyFive
   VERSION = "0.0.4"
 
   class GitFileList
-    include Enumerable
-    # @return [String] the commits that have changed for this build (e.g.: first_commit...last_commit)
-    attr_accessor :range
-
-    # @return [String] commit range (e.g.: begin...end commit)
-    def range
-      if @range == "" || @range.nil?
-        "FETCH_HEAD^...FETCH_HEAD"
-      elsif !@range.include?("...")
-        "#{@range}^...#{@range}"
-      else
-        @range
-      end
-    end
-
-    def each(&block)
-      files.each(&block)
-    end
-
-    def files
+    def self.files(range)
       git("log --name-only --pretty=\"format:\" #{range}").split("\n").uniq.sort
     end
 
-    def commits
+    def self.commits(range)
       git("log --oneline --decorate #{range}").split("\n")
+    end
+
+    def self.fix_range(range)
+      range ||= "FETCH_HEAD"
+      range.include?("...") ? range : "#{range}^...#{range}"
     end
 
     private
 
-    def git(args, default_value = "")
+    def self.git(args, default_value = "")
       ret = `git #{args} 2> /dev/null`.chomp
       $CHILD_STATUS.to_i == 0 ? ret : default_value
     end
@@ -123,8 +109,7 @@ class JohnnyFive
   class Sherlock
     extend Forwardable
 
-    def initialize(files, rules)
-      @files = files
+    def initialize(rules)
       @rules = rules
       @branches = []
     end
@@ -141,8 +126,10 @@ class JohnnyFive
     attr_accessor :pr
     # @return [Boolean] true to show verbose messages
     attr_accessor :verbose
+    # @return [String] git commit range (e.g.: FETCH_HEAD^...FETCH_HEAD)
+    attr_accessor :range
 
-    attr_accessor :files, :rules
+    attr_accessor :rules
 
     def pr?
       pr != "false"
@@ -158,7 +145,7 @@ class JohnnyFive
       list("DETECT:") { @rules.dependencies(target) } if verbose
       list("REGEX:") { @rules[target] } if verbose || check
       regexp = Regexp.union(@rules[target])
-      files.detect { |fn| regexp.match(fn) }.tap { |fn| puts "build triggered by change to file #{fn}" if fn }
+      GitFileList[range].detect { |fn| regexp.match(fn) }
     end
 
     # main logic to determine what to do
@@ -181,9 +168,9 @@ class JohnnyFive
     def inform
       puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
       puts "COMPONENT    : #{component}"
-      puts "COMMIT_RANGE : #{files.range}"
-      list("COMMITS") { files.commits }
-      list("FILES") { files } if verbose
+      puts "COMMIT_RANGE : #{range}"
+      list("COMMITS") { GitFileList.commits(range) }
+      list("FILES") { GitFileList.files(range) } if verbose
       self
     end
 
@@ -194,6 +181,7 @@ class JohnnyFive
     end
 
     def run
+      self.range = GitFileList.fix_range(range)
       inform
       sanity_check if check
       run_it, reason = deduce
@@ -245,17 +233,15 @@ class JohnnyFive
   class DslTranslator
     extend Forwardable
 
-    def initialize(main, sherlock, files, rules)
+    def initialize(main, sherlock, rules)
       @main = main
       @sherlock = sherlock
-      # @files = files
-      # @rules = rules
+      @rules = rules
     end
 
     attr_reader :sherlock, :main
-    def_delegators :sherlock, :branch=, :branches, :branches=, :check=, :component=, :verbose=, :rules, :files
+    def_delegators :sherlock, :branch=, :branches, :branches=, :check=, :component=, :verbose=, :rules, :range=
     def_delegators :rules, :basic_dependencies, :basic_rules, :shallow_rules
-    def_delegators :files, :range=
 
     def suite(name)
       @suite = name
@@ -278,12 +264,11 @@ class JohnnyFive
     end
   end
 
-  attr_reader :sherlock, :files, :rules
+  attr_reader :sherlock, :rules, :translator
 
   def initialize
-    @files = GitFileList.new
     @rules = RuleList.new
-    @sherlock = Sherlock.new(@files, @rules)
+    @sherlock = Sherlock.new(@rules)
   end
 
   def parse(argv, env)
@@ -291,13 +276,11 @@ class JohnnyFive
       opts.version = VERSION
       opt(opts, sherlock, env) do |o|
         o.opt(:branch, "TRAVIS_BRANCH", "--branch STRING", "Branch being built")
-        o.opt(:check, "--check", "validate that every file on the filesystem has a rule")
-        o.opt(:component, "--component STRING", "name of component being built")
+        o.opt(:check, "CHECK", "--check", "validate that every file on the filesystem has a rule")
+        o.opt(:component, "COMPONENT", "--component STRING", "name of component being built")
         o.opt(:pr, "TRAVIS_PULL_REQUEST", "--pr STRING", "pull request number or false")
-        o.opt(:verbose, "-v", "--verbose", "--[no-]verbose", "Run verbosely")
-      end
-      opt(opts, files, env) do |o|
         o.opt(:range, "TRAVIS_COMMIT_RANGE", "--range SHA...SHA", "Git commit range")
+        o.opt(:verbose, "VERBOSE", "-v", "--verbose", "--[no-]verbose", "Run verbosely")
       end
     end
     options.parse!(argv)
@@ -311,7 +294,7 @@ class JohnnyFive
   end
 
   def translator
-    DslTranslator.new(self, sherlock, files, rules)
+    @translator = DslTranslator.new(self, sherlock, rules)
   end
 
   def run
