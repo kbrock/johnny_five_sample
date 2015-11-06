@@ -20,8 +20,6 @@ class JohnnyFive
       range.include?("...") ? range : "#{range}^...#{range}"
     end
 
-    private
-
     def self.git(args, default_value = "")
       ret = `git #{args} 2> /dev/null`.chomp
       $CHILD_STATUS.to_i == 0 ? ret : default_value
@@ -49,9 +47,9 @@ class JohnnyFive
     def self.glob2regex(glob, _options = {})
       return glob if glob.kind_of?(Regexp)
 
-      Regexp.new(glob.gsub(/([{},.]|\*\*\/\*|\*\*\/|\*)/) do
+      Regexp.new(glob.gsub(%r{([{},.]|\*\*/\*|\*\*/|\*)}) do
         case $1
-        when '**/*' then '.*'   # directory and file match
+        when '**/*' then '.*'    # directory and file match
         when '*'    then '[^/]*' # file match
         when '**/'  then '.*/'   # directory match
         when '{'    then '(?:'   # grouping of filenames
