@@ -4,7 +4,7 @@ require 'forwardable'
 require 'optionparser'
 
 class JohnnyFive
-  VERSION = "0.0.4"
+  VERSION = "0.0.5"
 
   class GitFileList
     def self.files(range)
@@ -105,6 +105,58 @@ class JohnnyFive
 
   ########### FOLD ###########
 
+  # Easy dsl to populate rules (or sherlock)
+  class DslTranslator
+    def initialize(sherlock, rules)
+      @rules = rules
+      @sherlock = sherlock
+    end
+
+    def suite(name)
+      @suite = name
+      yield self
+    end
+
+    # add a file that triggers this rule and all dependencies
+    def file(glob)
+      basic_rules[@suite] = Rules.glob2regex(glob)
+    end
+
+    # add a file that triggers this rule (but not dependencies)
+    def test(glob)
+      shallow_rules[@suite] = Rules.glob2regex(glob)
+    end
+
+    # add a dependency between 2 rules
+    def trigger(target)
+      basic_dependencies[@suite] = target
+    end
+
+    def_delegators :@sherlock, :branch=, :branches, :branches=, :check=, :component=, :verbose=, :range=
+    def_delegators :@rules, :basic_dependencies, :basic_rules, :shallow_rules
+  end
+
+  # Class to parse ENV and ARGV
+  # see also parse method
+  class OptSetter
+    def initialize(opts, model, env)
+      @opts  = opts
+      @model = model
+      @env = env
+    end
+
+    def opt(value, *args)
+      # support environment variable being specified
+      unless args[0].start_with?("-")
+        env = args.shift
+        ev = @env[env]
+        @model.send("#{value}=", ev) if ev
+        args.last << " (#{env}=#{ev || "<not set>"})"
+      end
+      @opts.on(*args) { |v| @model.send("#{value}=", v) }
+    end
+  end
+
   # uses facts to deduce a plan
   class Sherlock
     extend Forwardable
@@ -142,9 +194,9 @@ class JohnnyFive
     # @return [Boolean] true if the changed files trigger this target
     def triggered?(target)
       return true if component.nil? || component.empty?
-      list("DETECT:") { @rules.dependencies(target) } if verbose
-      list("REGEX:") { @rules[target] } if verbose || check
-      regexp = Regexp.union(@rules[target])
+      list("DETECT:") { rules.dependencies(target) } if verbose
+      list("REGEX:") { rules[target] } if verbose || check
+      regexp = Regexp.union(rules[target])
       GitFileList[range].detect { |fn| regexp.match(fn) }
     end
 
@@ -209,66 +261,15 @@ class JohnnyFive
     end
   end
 
-  # Parser for the command line
-  class OptSetter
-    def initialize(opts, model, env)
-      @opts  = opts
-      @model = model
-      @env = env
-    end
-
-    def opt(value, *args)
-      # support environment variable being specified
-      unless args[0].start_with?("-")
-        env = args.shift
-        ev = @env[env]
-        @model.send("#{value}=", ev) if ev
-        args.last << " (#{env}=#{ev || "<not set>"})"
-      end
-      @opts.on(*args) { |v| @model.send("#{value}=", v) }
-    end
-  end
-
-  # Configuration file Translator
-  class DslTranslator
-    extend Forwardable
-
-    def initialize(main, sherlock, rules)
-      @main = main
-      @sherlock = sherlock
-      @rules = rules
-    end
-
-    attr_reader :sherlock, :main
-    def_delegators :sherlock, :branch=, :branches, :branches=, :check=, :component=, :verbose=, :rules, :range=
-    def_delegators :rules, :basic_dependencies, :basic_rules, :shallow_rules
-
-    def suite(name)
-      @suite = name
-      yield self
-    end
-
-    # add a file that triggers this rule and all dependencies
-    def file(glob)
-      basic_rules[@suite] = Rules.glob2regex(glob)
-    end
-
-    # add a file that triggers this rule (but not dependencies)
-    def test(glob)
-      shallow_rules[@suite] = Rules.glob2regex(glob)
-    end
-
-    # add a dependency between 2 rules
-    def trigger(target)
-      basic_dependencies[@suite] = target
-    end
-  end
-
-  attr_reader :sherlock, :rules, :translator
+  attr_reader :sherlock, :rules
 
   def initialize
     @rules = RuleList.new
     @sherlock = Sherlock.new(@rules)
+  end
+
+  def opt(opts, model, env)
+    yield OptSetter.new(opts, model, env)
   end
 
   def parse(argv, env)
@@ -289,20 +290,12 @@ class JohnnyFive
     self
   end
 
-  def opt(opts, model, env)
-    yield OptSetter.new(opts, model, env)
-  end
-
-  def translator
-    @translator = DslTranslator.new(self, sherlock, rules)
-  end
-
   def run
     sherlock.run
   end
 
   def self.config
-    yield instance.translator
+    yield DslTranslator.new(instance.sherlock)
   end
 
   def self.instance
