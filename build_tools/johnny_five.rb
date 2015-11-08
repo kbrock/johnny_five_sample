@@ -89,12 +89,9 @@ class JohnnyFive
     def dependencies(target)
       targets = [target, :all]
       count = 0
-      # keep doing this until we stop adding some
       while count != targets.size
         count = targets.size
-        targets += basic_dependencies[targets]
-        targets.compact!
-        targets.uniq!
+        (targets += basic_dependencies[targets]).tap(&:compact!).tap(&:uniq!)
       end
       targets
     end
@@ -110,8 +107,8 @@ class JohnnyFive
   # Easy dsl to populate rules (or sherlock)
   class DslTranslator
     extend Forwardable
-    def initialize(sherlock, rules)
-      @rules = rules
+    def initialize(sherlock, rules = nil)
+      @rules = rules || sherlock.rules
       @sherlock = sherlock
     end
 
@@ -120,22 +117,19 @@ class JohnnyFive
       yield self
     end
 
-    # add a file that triggers this rule and all dependencies
     def file(glob)
       basic_rules[@suite] = Rules.glob2regex(glob)
     end
 
-    # add a file that triggers this rule (but not dependencies)
     def test(glob)
       shallow_rules[@suite] = Rules.glob2regex(glob)
     end
 
-    # add a dependency between 2 rules
     def trigger(target)
       basic_dependencies[@suite] = target
     end
 
-    def_delegators :@sherlock, :branch=, :branches, :branches=, :check=, :component=, :verbose=, :range=
+    def_delegators :@sherlock, :branch=, :branches, :branches=, :check=, :component=, :verbose=, :range= ,:pr=
     def_delegators :@rules, :basic_dependencies, :basic_rules, :shallow_rules
   end
 
@@ -165,8 +159,12 @@ class JohnnyFive
 
     attr_accessor :rules
 
+    def range=(range)
+      @range = ::JohnnyFive::GitFileList.fix_range(range)
+    end
+
     def pr?
-      pr != "false"
+      pr != false && pr != "false"
     end
 
     def branch_match?
@@ -199,10 +197,8 @@ class JohnnyFive
 
     def run
       run_it, reason = deduce
-      unless run_it
-        puts "==> #{reason} <=="
-        exit(1)
-      end
+      puts "==> #{reason} <=="
+      exit(1) unless run_it
     end
   end
 
@@ -254,14 +250,17 @@ class JohnnyFive
       end
     end
     options.parse!(argv)
-    sherlock.range = GitFileList.fix_range(sherlock.range)
     argv.each { |file_name| require File.expand_path(file_name, Dir.pwd) }
 
     self
   end
 
+  def config
+    DslTranslator.new(sherlock, rules)
+  end
+
   def self.config
-    yield DslTranslator.new(instance.sherlock, instance.rules)
+    yield instance.config
   end
 
   def self.instance
@@ -275,12 +274,11 @@ class JohnnyFive
     list("COMMITS") { GitFileList.commits(sherlock.range) }
     list("FILES") { GitFileList.files(sherlock.range) } if sherlock.verbose
     list("DETECT:") { rules.dependencies(sherlock.component) } if sherlock.verbose
-    list("REGEX:") { sherlock.rules[sherlock.component] } if sherlock.verbose || sherlock.check
+    list("REGEX:") { rules[sherlock.component] } if sherlock.verbose || sherlock.check
     self
   end
 
-  def run(argv, env)
-    parse(argv, env)
+  def run
     inform
     sanity_check if sherlock.check
     sherlock.run
@@ -318,5 +316,5 @@ if __FILE__ == $PROGRAM_NAME
   $stdout.sync = true
   $stderr.sync = true
 
-  JohnnyFive.run(ARGV, ENV)
+  JohnnyFive.parse(ARGV, ENV).run
 end

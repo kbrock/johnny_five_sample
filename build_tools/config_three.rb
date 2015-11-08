@@ -5,17 +5,19 @@ class JohnnyThree
   extend Forwardable
   attr_accessor :johnny, :branch, :component, :pr
   def initialize
-    @johnny = JohnnyFive.new
-    @branch = ENV["TRAVIS_BRANCH"]
-    @component = ENV["TEST_SUITE"] || ENV["GEM"]
-    self.range = ENV["TRAVIS_COMMIT_RANGE"]
-    @pr = ENV["TRAVIS_PULL_REQUEST"] != "false"
+    @johnny = JohnnyFive.instance
   end
 
-  def_delegators :johnny, :rules, :files
+  def_delegators :johnny, :rules
 
   def setup
-    matrix = johnny.translator
+    matrix = johnny.config
+    matrix.branches = %w(master)
+    matrix.branch = ENV["TRAVIS_BRANCH"]
+    matrix.component = ENV["COMPONENT"] || ENV["TEST_SUITE"] || ENV["GEM"]
+    matrix.range = JohnnyFive::GitFileList.fix_range(ENV["TRAVIS_COMMIT_RANGE"])
+    matrix.pr = ENV["TRAVIS_PULL_REQUEST"]
+
     matrix.suite %w(controllers models) do |cfg|
       cfg.file "Gemfile"
       cfg.file "config/**/*"
@@ -72,33 +74,8 @@ class JohnnyThree
     end
     self
   end
-
-  # main logic to determine what to do
-  def deduce
-    if pr
-      #targets, regexps, regexp = johnny.rules.resolve(component)
-      # list("DETECT:") { targets }
-      # list("REGEX:") { regexps }
-      regexp = johnny.rules[component]
-      triggered_file = johnny.files.detect { |fn| regexp.match(fn) }
-      if triggered_file
-        puts "building PR for #{component} (triggered by #{triggered_file}"
-      else
-        puts "skipping PR for unchanged: #{component}"
-        exit(1)
-      end
-    else
-      # build everything on master
-      if branch && %w(master).include?(branch)
-        puts "building branch: #{branch}"
-      else
-        puts "skipping branch: #{branch || "none specified"}"
-        exit(1)
-      end
-    end
-  end
 end
 
 if __FILE__ == $PROGRAM_NAME
-  JohnnyThree.new.setup.deduce
+  JohnnyThree.new.setup.johnny.sherlock.run
 end
