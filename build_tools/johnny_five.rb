@@ -11,6 +11,10 @@ class JohnnyFive
       git("log --name-only --pretty=\"format:\" #{range}").split("\n").uniq.sort
     end
 
+    def self.[](range)
+      files(range)
+    end
+
     def self.commits(range)
       git("log --oneline --decorate #{range}").split("\n")
     end
@@ -105,6 +109,7 @@ class JohnnyFive
 
   # Easy dsl to populate rules (or sherlock)
   class DslTranslator
+    extend Forwardable
     def initialize(sherlock, rules)
       @rules = rules
       @sherlock = sherlock
@@ -132,27 +137,6 @@ class JohnnyFive
 
     def_delegators :@sherlock, :branch=, :branches, :branches=, :check=, :component=, :verbose=, :range=
     def_delegators :@rules, :basic_dependencies, :basic_rules, :shallow_rules
-  end
-
-  # Class to parse ENV and ARGV
-  # see also parse method
-  class OptSetter
-    def initialize(opts, model, env)
-      @opts  = opts
-      @model = model
-      @env = env
-    end
-
-    def opt(value, *args)
-      # support environment variable being specified
-      unless args[0].start_with?("-")
-        env = args.shift
-        ev = @env[env]
-        @model.send("#{value}=", ev) if ev
-        args.last << " (#{env}=#{ev || "<not set>"})"
-      end
-      @opts.on(*args) { |v| @model.send("#{value}=", v) }
-    end
   end
 
   # uses facts to deduce a plan
@@ -192,8 +176,6 @@ class JohnnyFive
     # @return [Boolean] true if the changed files trigger this target
     def triggered?(target)
       return true if component.nil? || component.empty?
-      list("DETECT:") { rules.dependencies(target) } if verbose
-      list("REGEX:") { rules[target] } if verbose || check
       regexp = Regexp.union(rules[target])
       GitFileList[range].detect { |fn| regexp.match(fn) }
     end
@@ -215,47 +197,36 @@ class JohnnyFive
       end
     end
 
-    def inform
-      puts "#{pr? ? "PR" : "  "} BRANCH    : #{branch}"
-      puts "COMPONENT    : #{component}"
-      puts "COMMIT_RANGE : #{range}"
-      list("COMMITS") { GitFileList.commits(range) }
-      list("FILES") { GitFileList.files(range) } if verbose
-      self
-    end
-
-    def sanity_check
-      all_files = every_file
-      all_rules = rules.every
-      list("UNCOVERED:", false) { all_files.select { |fn| !all_rules.match(fn) } }
-    end
-
     def run
-      self.range = GitFileList.fix_range(range)
-      inform
-      sanity_check if check
       run_it, reason = deduce
       unless run_it
         puts "==> #{reason} <=="
         exit(1)
       end
     end
+  end
 
-    private
+  ###### Logic and DSL above ######
 
-    def list(name, always_display = true)
-      entries = yield
-      if always_display || !entries.empty?
-        puts "======="
-        puts "#{name}"
-        puts entries.map { |fn| " - #{fn}" }
-        puts
-      end
+  # Class to parse ENV and ARGV
+  # see also parse method
+  class OptSetter
+    def initialize(opts, model, env)
+      @opts  = opts
+      @model = model
+      @env = env
     end
 
-    # @return [Array<String>] all files in the current directory
-    def every_file
-      Dir['**/*'].select { |fn| File.file?(fn) } + Dir['.[a-z]*']
+    def opt(value, *args)
+      # support environment variable being specified
+      unless args[0].start_with?("-")
+        env = args.shift
+        ev = @env[env]
+        @model.send("#{value}=", ev) if ev
+        # add env value onto opts help message
+        args.last << " (#{env}=#{ev || "<not set>"})"
+      end
+      @opts.on(*args) { |v| @model.send("#{value}=", v) }
     end
   end
 
@@ -283,25 +254,63 @@ class JohnnyFive
       end
     end
     options.parse!(argv)
+    sherlock.range = GitFileList.fix_range(sherlock.range)
     argv.each { |file_name| require File.expand_path(file_name, Dir.pwd) }
 
     self
   end
 
-  def run
-    sherlock.run
-  end
-
   def self.config
-    yield DslTranslator.new(instance.sherlock)
+    yield DslTranslator.new(instance.sherlock, instance.rules)
   end
 
   def self.instance
     @instance ||= new
   end
 
+  def inform
+    puts "#{sherlock.pr? ? "PR" : "  "} BRANCH    : #{sherlock.branch}"
+    puts "COMPONENT    : #{sherlock.component}"
+    puts "COMMIT_RANGE : #{sherlock.range}"
+    list("COMMITS") { GitFileList.commits(sherlock.range) }
+    list("FILES") { GitFileList.files(sherlock.range) } if sherlock.verbose
+    list("DETECT:") { rules.dependencies(sherlock.component) } if sherlock.verbose
+    list("REGEX:") { sherlock.rules[sherlock.component] } if sherlock.verbose || sherlock.check
+    self
+  end
+
+  def run(argv, env)
+    parse(argv, env)
+    inform
+    sanity_check if sherlock.check
+    sherlock.run
+  end
+
   def self.run(argv, env)
-    instance.parse(argv, env).run
+    instance.run(argv, env)
+  end
+
+  private
+
+  def sanity_check
+    all_files = every_file
+    all_rules = rules.every
+    list("UNCOVERED:", false) { all_files.select { |fn| !all_rules.match(fn) } }
+  end
+
+  def list(name, always_display = true)
+    entries = yield
+    if always_display || !entries.empty?
+      puts "======="
+      puts "#{name}"
+      puts entries.map { |fn| " - #{fn}" }
+      puts
+    end
+  end
+
+  # @return [Array<String>] all files in the current directory
+  def every_file
+    Dir['**/*'].select { |fn| File.file?(fn) } + Dir['.[a-z]*']
   end
 end
 
