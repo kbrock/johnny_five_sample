@@ -33,7 +33,7 @@ JohnnyFive.config do |matrix|
     cfg.file "config/**/*"
     cfg.file "public/**/*"
     cfg.file "vendor/**/*"
-    cfg.trigger "controller"
+    cfg.trigger "controllers"
     cfg.test "test/integration/**/*_test.rb"
   end
 
@@ -55,6 +55,8 @@ JohnnyFive.config do |matrix|
     cfg.file "log/**/*"
     cfg.file "lib/tasks/**/*"
     cfg.file "tmp/**/*"
+    cfg.file "config.ru"
+    cfg.file ".*"
   end
 
   matrix.suite :all do |cfg|
