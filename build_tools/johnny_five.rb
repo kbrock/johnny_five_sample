@@ -31,6 +31,11 @@ class JohnnyFive
   end
 
   class Rules
+    extend Enumerable
+    extend Forwardable
+
+    def_delegators :@target, :each, :keys, :count
+
     def initialize
       @target = Hash.new { |h, k| h[k] = [] }
     end
@@ -111,6 +116,8 @@ class JohnnyFive
       @rules = rules || sherlock.rules
       @sherlock = sherlock
     end
+
+    attr_accessor :rules, :sherlock
 
     def suite(name)
       @suite = name
@@ -316,5 +323,5 @@ if __FILE__ == $PROGRAM_NAME
   $stdout.sync = true
   $stderr.sync = true
 
-  JohnnyFive.parse(ARGV, ENV).run
+  JohnnyFive.instance.parse(ARGV, ENV).run
 end
